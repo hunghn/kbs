@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
+import { MathContent } from "@/components/common/math-content";
 import type { QuestionInfo, CATStepInfo } from "@/lib/api";
 import { Clock, ChevronRight, Send, AlertCircle, Activity } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -260,7 +261,7 @@ export function QuizInterface({ currentStep, onAnswer, onFinish }: QuizInterface
         <CardHeader>
           <CardTitle className="text-lg font-medium leading-relaxed">
             <span className="text-primary font-bold mr-2">{current.external_id}</span>
-            {current.stem}
+            <MathContent content={current.stem} inline />
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
@@ -284,7 +285,7 @@ export function QuizInterface({ currentStep, onAnswer, onFinish }: QuizInterface
                 )}>
                   {opt}
                 </span>
-                {text}
+                <MathContent content={text} inline />
               </button>
             );
           })}

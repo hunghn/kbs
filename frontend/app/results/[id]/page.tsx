@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { authAPI, quizAPI, type QuizResultInfo, type InferenceRuleLogInfo } from "@/lib/api";
 import { Navbar } from "@/components/layout/navbar";
+import { MathContent } from "@/components/common/math-content";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -202,7 +203,9 @@ export default function ResultsPage() {
                     </div>
                     <p className="mt-1 text-sm">{log.reason}</p>
                     {log.question_stem && (
-                      <p className="mt-1 text-xs text-muted-foreground line-clamp-2">{log.question_stem}</p>
+                      <div className="mt-1 text-xs text-muted-foreground line-clamp-2">
+                        <MathContent content={log.question_stem} inline />
+                      </div>
                     )}
                   </div>
                 ))}
@@ -235,7 +238,7 @@ export default function ResultsPage() {
                     <div className="flex-1">
                       <p className="font-medium">
                         <span className="text-primary">{r.question.external_id}</span>
-                        {" "}{r.question.stem}
+                        {" "}<MathContent content={r.question.stem} inline />
                       </p>
                       <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
                         {["A", "B", "C", "D"].map((opt) => {
@@ -251,7 +254,7 @@ export default function ResultsPage() {
                                 isUserAnswer && !isCorrect && "bg-red-100 text-red-800 line-through",
                               )}
                             >
-                              <span className="font-bold mr-1">{opt}.</span> {text}
+                              <span className="font-bold mr-1">{opt}.</span> <MathContent content={text} inline />
                             </div>
                           );
                         })}

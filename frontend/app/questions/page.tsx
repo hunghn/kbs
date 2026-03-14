@@ -14,6 +14,7 @@ import {
   type GeneratedQuestionInfo,
 } from "@/lib/api";
 import { Navbar } from "@/components/layout/navbar";
+import { MathContent } from "@/components/common/math-content";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -607,12 +608,14 @@ export default function QuestionsPage() {
                     Nguồn: <span className="font-medium text-foreground">{generated.generation_source}</span>
                     {generated.llm_model ? ` (${generated.llm_model})` : ""}
                   </p>
-                  <p className="text-sm font-medium">{generated.stem}</p>
+                  <div className="text-sm font-medium">
+                    <MathContent content={generated.stem} />
+                  </div>
                   <div className="grid gap-1 text-xs text-muted-foreground md:grid-cols-2">
-                    <p>A. {generated.option_a}</p>
-                    <p>B. {generated.option_b}</p>
-                    <p>C. {generated.option_c}</p>
-                    <p>D. {generated.option_d}</p>
+                    <div>A. <MathContent content={generated.option_a} inline /></div>
+                    <div>B. <MathContent content={generated.option_b} inline /></div>
+                    <div>C. <MathContent content={generated.option_c} inline /></div>
+                    <div>D. <MathContent content={generated.option_d} inline /></div>
                   </div>
                   <div className="grid grid-cols-2 gap-2 text-xs md:grid-cols-4">
                     <p>Đáp án: {generated.correct_answer}</p>
@@ -670,7 +673,9 @@ export default function QuestionsPage() {
                         {q.is_archived && (
                           <p className="text-[11px] font-medium text-amber-700">ARCHIVED</p>
                         )}
-                        <p className="line-clamp-2 text-sm font-medium">{q.stem}</p>
+                        <div className="line-clamp-2 text-sm font-medium">
+                          <MathContent content={q.stem} inline />
+                        </div>
                       </div>
                       <div className="flex gap-2">
                         <Button
@@ -708,10 +713,10 @@ export default function QuestionsPage() {
                     </div>
 
                     <div className="mt-2 grid gap-1 text-xs text-muted-foreground sm:grid-cols-2">
-                      <p>A. {q.option_a}</p>
-                      <p>B. {q.option_b}</p>
-                      <p>C. {q.option_c}</p>
-                      <p>D. {q.option_d}</p>
+                      <p>A. <MathContent content={q.option_a} inline /></p>
+                      <p>B. <MathContent content={q.option_b} inline /></p>
+                      <p>C. <MathContent content={q.option_c} inline /></p>
+                      <p>D. <MathContent content={q.option_d} inline /></p>
                     </div>
 
                     <p className="mt-2 text-[11px] text-muted-foreground">

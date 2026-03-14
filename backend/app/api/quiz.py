@@ -517,12 +517,56 @@ async def generate_question_with_llm(
 
     llm_runtime_settings = await get_effective_llm_runtime_config(db)
 
-    generated = generate_question_from_topic(
-        topic_name=topic.name,
-        knowledge_context=payload.knowledge_context,
-        target_level=payload.target_level,
-        runtime_settings=llm_runtime_settings,
+    existing_rows = await db.execute(
+        select(Question)
+        .where(Question.topic_id == payload.topic_id)
+        .order_by(Question.id.desc())
+        .limit(500)
     )
+    existing_questions = existing_rows.scalars().all()
+    blocked_signatures = {_question_signature_from_model(q) for q in existing_questions}
+    blocked_stems = {_normalize_text(q.stem) for q in existing_questions}
+
+    existing_stem_samples = [
+        f"- {q.stem.strip()[:140]}"
+        for q in existing_questions[:8]
+        if (q.stem or "").strip()
+    ]
+    base_context = (payload.knowledge_context or "").strip()
+
+    generated = None
+    for attempt in range(5):
+        anti_dup_context = base_context
+        if existing_stem_samples:
+            anti_dup_context = (
+                f"{anti_dup_context}\n\n" if anti_dup_context else ""
+            ) + (
+                "Yêu cầu chống trùng lặp: câu hỏi mới KHÔNG được trùng hoặc diễn đạt lại quá giống các stem sau:\n"
+                + "\n".join(existing_stem_samples)
+                + f"\nLần thử: {attempt + 1}."
+            )
+
+        candidate = generate_question_from_topic(
+            topic_name=topic.name,
+            knowledge_context=anti_dup_context or payload.knowledge_context,
+            target_level=payload.target_level,
+            runtime_settings=llm_runtime_settings,
+        )
+
+        candidate_signature = _question_signature_from_payload(candidate)
+        candidate_stem = _normalize_text(candidate.get("stem", ""))
+        if candidate_signature in blocked_signatures or candidate_stem in blocked_stems:
+            continue
+
+        generated = candidate
+        break
+
+    if not generated:
+        raise HTTPException(
+            status_code=409,
+            detail="Không thể sinh câu hỏi mới không trùng với ngân hàng hiện tại cho topic này",
+        )
+
     return GeneratedQuestionOut(**generated)
 
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   authAPI,
@@ -54,6 +54,22 @@ const emptyForm: QuestionFormState = {
 };
 
 const PAGE_SIZE = 100;
+const GENERATED_SIGNATURES_STORAGE_KEY = "kbs_generated_question_signatures";
+
+function normalizeForSignature(value: string | undefined): string {
+  return (value || "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function buildGeneratedSignature(question: GeneratedQuestionInfo): string {
+  return [
+    normalizeForSignature(question.stem),
+    normalizeForSignature(question.option_a),
+    normalizeForSignature(question.option_b),
+    normalizeForSignature(question.option_c),
+    normalizeForSignature(question.option_d),
+    normalizeForSignature(question.correct_answer),
+  ].join("|");
+}
 
 export default function QuestionsPage() {
   const router = useRouter();
@@ -85,6 +101,7 @@ export default function QuestionsPage() {
   const [quickAddLoading, setQuickAddLoading] = useState(false);
   const [genError, setGenError] = useState<string | null>(null);
   const [generated, setGenerated] = useState<GeneratedQuestionInfo | null>(null);
+  const generatedSignaturesRef = useRef<Set<string>>(new Set());
 
   const selectedTopic = useMemo(
     () => topics.find((topic) => topic.id === form.topic_id),
@@ -139,6 +156,19 @@ export default function QuestionsPage() {
   useEffect(() => {
     checkAuthAndLoad();
   }, [checkAuthAndLoad]);
+
+  useEffect(() => {
+    const stored = sessionStorage.getItem(GENERATED_SIGNATURES_STORAGE_KEY);
+    if (!stored) return;
+    try {
+      const parsed = JSON.parse(stored);
+      if (Array.isArray(parsed)) {
+        generatedSignaturesRef.current = new Set(parsed.filter((item) => typeof item === "string"));
+      }
+    } catch {
+      generatedSignaturesRef.current = new Set();
+    }
+  }, []);
 
   useEffect(() => {
     if (!selectedSubjectId) return;
@@ -321,12 +351,34 @@ export default function QuestionsPage() {
       clearFeedback();
       setGenError(null);
       setGenLoading(true);
-      const data = await quizAPI.generateQuestion({
-        topic_id: Number(form.topic_id),
-        knowledge_context: contextText.trim() || undefined,
-        target_level: targetLevel,
-      });
-      setGenerated(data);
+      const maxRetries = 4;
+      let accepted: GeneratedQuestionInfo | null = null;
+
+      for (let attempt = 0; attempt < maxRetries; attempt += 1) {
+        const data = await quizAPI.generateQuestion({
+          topic_id: Number(form.topic_id),
+          knowledge_context: contextText.trim() || undefined,
+          target_level: targetLevel,
+        });
+
+        const signature = buildGeneratedSignature(data);
+        if (!generatedSignaturesRef.current.has(signature)) {
+          generatedSignaturesRef.current.add(signature);
+          sessionStorage.setItem(
+            GENERATED_SIGNATURES_STORAGE_KEY,
+            JSON.stringify(Array.from(generatedSignaturesRef.current))
+          );
+          accepted = data;
+          break;
+        }
+      }
+
+      if (!accepted) {
+        setGenError("Hệ thống đang sinh trùng với câu nháp đã tạo trong phiên hiện tại. Vui lòng thử lại hoặc đổi ngữ cảnh.");
+        return;
+      }
+
+      setGenerated(accepted);
     } catch (e) {
       setGenError(e instanceof Error ? e.message : "Không thể sinh câu hỏi bằng LLM");
     } finally {

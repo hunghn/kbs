@@ -1,6 +1,6 @@
 # KBS - Hệ thống Kiểm tra Tri thức Thông minh
 
-KBS là hệ thống quản lý tri thức và kiểm tra năng lực học tập dựa trên mô hình tri thức quan hệ, ontology và IRT 3PL. Hệ thống tập trung vào hai miền tri thức chính là Toán rời rạc và Cơ sở dữ liệu SQL, đồng thời hỗ trợ CAT để chọn câu hỏi thích ứng theo năng lực người học.
+KBS là hệ thống quản lý tri thức và kiểm tra năng lực học tập dựa trên mô hình tri thức quan hệ, ontology và IRT 3PL. Hệ thống tập trung vào hai miền tri thức chính là Toán rời rạc và Cơ sở dữ liệu SQL, đồng thời hỗ trợ CAT (Computerized Adaptive Testing) để chọn câu hỏi thích ứng theo năng lực người học.
 
 ## Tổng quan
 
@@ -45,7 +45,7 @@ Mục tiêu của hệ thống:
 - FastAPI REST API
 - SQLAlchemy Async ORM
 - Engine IRT 3PL để ước lượng năng lực và tính Fisher Information
-- Rule engine điều phối CAT theo các luật R1-R7
+- Rule engine điều phối CAT theo bộ luật R1-R12 và BLOOM
 - Pipeline sinh và thẩm định câu hỏi bằng LLM
 
 ### Database
@@ -76,8 +76,8 @@ Hệ thống biểu diễn tri thức theo Rela-model:
 
 ### 3. Hệ thống chọn câu hỏi đầu tiên
 
-- Ưu tiên item có độ khó gần mức trung tâm, cụ thể là `b` gần `0`.
-- Trong nhóm này, ưu tiên item có độ phân biệt cao `a > 1.2`.
+- Ưu tiên item có độ khó khởi tạo an toàn, cụ thể `b ∈ [-1.5, -0.5]`.
+- Trong nhóm này, ưu tiên item có độ phân biệt cao `a > 1.2` để hội tụ nhanh năng lực ban đầu.
 - Nếu không có item thỏa điều kiện, hệ thống shortlist các item có `a` cao rồi chọn item có Fisher Information lớn nhất tại $\theta = 0$.
 - Nếu question bank ban đầu không có item khả dụng, backend có thể sinh một câu mới bằng LLM để mở phiên CAT.
 
@@ -93,9 +93,11 @@ Hệ thống biểu diễn tri thức theo Rela-model:
 
 - Loại bỏ các câu đã trả lời trong phiên hiện tại.
 - Ưu tiên tránh lặp lại các câu vừa xuất hiện ở các phiên gần đây của cùng người dùng và cùng môn.
-- Rule engine lọc tập ứng viên theo ngữ cảnh hiện tại.
-- Trên tập ứng viên đã lọc, hệ thống chọn item có Fisher Information cao nhất tại $\theta$ hiện tại.
-- Trong vài bước đầu, engine ưu tiên shortlist các câu có `a` cao trước khi chốt bằng Fisher.
+- Rule engine lọc tập ứng viên theo ngữ cảnh hiện tại (bao phủ topic, prerequisite, năng lực cao, đoán mò).
+- Hệ thống thiết lập `b_target` theo kết quả câu trước (`+0.5` nếu đúng, `-0.7` nếu sai) để điều hướng độ khó.
+- Trong vài bước đầu, engine ưu tiên shortlist các câu có `a` cao để phân loại nhanh.
+- Khi không đủ item phù hợp quanh `b_target`, hệ thống kích hoạt LLM để sinh item động.
+- Nếu các luật không chọn được item, hệ thống fallback sang chọn theo Fisher Information.
 
 ### 6. Hệ thống sinh câu bằng LLM khi cần
 
@@ -149,40 +151,83 @@ Trong đó:
 
 ### R1. Luật khởi tạo phiên CAT
 
-- Mục tiêu: chọn câu đầu tiên có độ khó trung tâm và khả năng phân loại tốt.
-- Điều kiện ưu tiên: `|b| <= 0.4` và `a > 1.2`.
+- IF `số_câu_đã_làm == 0`
+- THEN ưu tiên chọn câu có `b ∈ [-1.5, -0.5]` và `a > 1.2` trong môn học hiện tại.
 - Nếu có nhiều ứng viên, chọn theo Fisher Information tại $\theta = 0$.
+- Nếu không có ứng viên phù hợp, fallback qua shortlist `a` cao, rồi Fisher toàn cục.
 
-### R2. Luật nâng mức trong cùng topic
+### R2. Luật tăng độ khó
 
-- Nếu người học trả lời đúng một câu `Nhận biết`, hệ thống ưu tiên câu `Thông hiểu` trong cùng topic.
-- Mục tiêu là giữ mạch kiến thức và tăng dần mức độ nhận thức.
+- IF `User_Answer == Correct_Answer`
+- THEN đặt `b_target = theta_current + 0.5`.
+- Mục tiêu: tăng độ khó có kiểm soát theo năng lực vừa cập nhật.
 
-### R3. Luật chọn item lõi của CAT
+### R3. Luật giảm độ khó
 
-- Hệ thống tạo một dải độ khó quanh $\theta$ hiện tại.
-- Trên dải ứng viên đó, chọn item có Fisher Information cao nhất.
-- Trong vài câu đầu, có thêm bước shortlist các item có `a` cao trước khi chọn bằng Fisher.
+- IF `User_Answer != Correct_Answer`
+- THEN đặt `b_target = theta_current - 0.7`.
+- Mục tiêu: giảm độ khó đủ mạnh để tránh chuỗi thất bại liên tiếp.
 
-### R4. Luật cân bằng nội dung SQL và non-SQL
+### R4. Luật tối ưu giai đoạn đầu
 
-- Nếu tỷ lệ câu SQL trong lịch sử phiên quá cao, CAT ưu tiên chuyển sang câu non-SQL.
-- Mục tiêu là giữ cân bằng nội dung trong phiên đánh giá.
+- IF `số_câu_đã_làm <= 5`
+- THEN ưu tiên sắp xếp ứng viên theo `a DESC` trước khi chọn câu kế tiếp.
+- Mục tiêu: hội tụ nhanh $\theta$ ở các bước đầu của CAT.
 
-### R5. Luật hỗ trợ khi người học yếu ở SQL
+### R5. Luật chuyển topic để đảm bảo bao phủ ontology
 
-- Nếu sau hơn 3 câu mà độ chính xác ở nhóm SQL dưới 50%, CAT ưu tiên một câu SQL dễ hơn với mục tiêu gần `theta - 0.5`.
-- Mục tiêu là duy trì khả năng đo lường nhưng không đẩy người học vào chuỗi thất bại kéo dài.
+- IF `số_câu_đúng_liên_tiếp(Topic_X) >= 3`
+- THEN lọc ứng viên với `Topic != Topic_X` để chuyển sang topic ngang hàng.
+- Mục tiêu: tránh overfit vào một topic và đảm bảo độ bao phủ tri thức.
 
-### R6. Luật phát hiện khả năng đoán mò
+### R6. Luật lọc trình độ cao
 
-- Nếu người học trả lời đúng quá nhanh trên một câu có `c` cao, hệ thống gắn cờ khả năng đoán mò.
-- Khi đó, mức tăng của $\theta$ được làm dịu để tránh đánh giá quá cao năng lực thực.
+- IF `theta > 1.0`
+- THEN loại trừ các câu `Nhận biết` khỏi tập ứng viên.
+- Mục tiêu: tập trung đo lường ở mức `Thông hiểu/Vận dụng` khi người học đã vượt mức cơ bản.
 
-### R7. Luật phân loại kết quả nổi trội
+### R7. Luật kiểm soát đoán mò
 
-- Nếu $\theta > 1.5$ và độ chính xác ở nhóm `Vận dụng` vượt 80%, hệ thống gắn phân loại kết quả ở mức rất tốt.
-- Luật này phục vụ diễn giải đầu ra và báo cáo học tập.
+- IF `User_Answer == Correct` AND `Thời_gian_làm < 10s` AND `c > 0.2`
+- THEN coi là có khả năng đoán mò và giảm trọng số cập nhật năng lực (damp theta update).
+- Mục tiêu: tránh thổi phồng năng lực do đáp án may mắn.
+
+### R8. Luật ràng buộc lặp
+
+- IF `Question_ID` đã tồn tại trong lịch sử phiên (và cửa sổ câu gần nhất)
+- THEN loại khỏi danh sách chọn.
+- Mục tiêu: chống trùng lặp và cải thiện trải nghiệm làm bài.
+
+### R9. Luật kích hoạt sinh câu hỏi mới bằng LLM
+
+- IF số item phù hợp quanh `b_target` trong DB không đủ (hoặc `min_gap` quá lớn)
+- THEN kích hoạt pipeline sinh câu hỏi động theo topic ưu tiên.
+- Mục tiêu: đảm bảo CAT không bị kẹt do thiếu item phù hợp.
+
+### R10. Luật gán độ khó cho câu hỏi LLM
+
+- IF câu hỏi mới được sinh bởi LLM
+- THEN dùng cơ chế scoring/validation để gán `b_dự_kiến` theo độ phức tạp suy luận.
+- Mục tiêu: giữ nhất quán IRT giữa item tĩnh và item sinh động.
+
+### R11. Luật tiên quyết (Prerequisite Fallback)
+
+- IF `User_Fail_Consecutive(Topic_X) >= 2` AND tồn tại `Topic_Y` là tiên quyết của `Topic_X`
+- THEN chuyển tạm sang `Topic_Y` và ưu tiên câu dễ (`b ≈ -1.0`) để củng cố nền tảng.
+- Mục tiêu: xử lý bế tắc tri thức theo quan hệ tiên quyết trong ontology.
+
+### R12. Luật suy diễn Mạng tính toán (Computation Network)
+
+- IF người học đã thể hiện mastery ở `Topic_A` và `Topic_B`
+- AND trong đồ thị tri thức có quan hệ suy diễn `A, B -> C`
+- THEN tăng `theta` khởi tạo cho `Topic_C` và có thể bỏ qua một phần câu `Nhận biết` của `Topic_C`.
+- Mục tiêu: suy diễn năng lực gián tiếp để rút ngắn lộ trình đánh giá.
+
+### BLOOM. Luật phân loại kết quả nổi trội
+
+- IF $\theta > 1.5$ và độ chính xác nhóm `Vận dụng` > 80%
+- THEN gắn nhãn năng lực nổi trội trong báo cáo kết quả.
+- Luật này phục vụ diễn giải đầu ra, không dùng để chọn câu tiếp theo.
 
 ## Hybrid CAT với LLM
 
@@ -251,7 +296,7 @@ Sau mỗi phiên, hệ thống có thể cung cấp:
 ### Chạy bằng Docker Compose
 
 ```bash
-cd /path/to/BDTT
+cd /path/to/kbs
 docker compose up -d
 docker compose exec backend python -m app.data.seed /data/MaTranKienThuc.xlsx
 ```
@@ -264,7 +309,7 @@ Sau khi chạy:
 ### Chạy thủ công trong môi trường phát triển
 
 ```bash
-cd /path/to/BDTT
+cd /path/to/kbs
 
 python3 -m venv .venv
 source .venv/bin/activate
@@ -277,7 +322,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 Terminal khác để import dữ liệu:
 
 ```bash
-cd /path/to/BDTT
+cd /path/to/kbs
 source .venv/bin/activate
 cd backend
 python -m app.data.seed ../MaTranKienThuc.xlsx
@@ -286,7 +331,7 @@ python -m app.data.seed ../MaTranKienThuc.xlsx
 Terminal khác để chạy frontend:
 
 ```bash
-cd /path/to/BDTT/frontend
+cd /path/to/kbs/frontend
 npm install
 npm run dev
 ```

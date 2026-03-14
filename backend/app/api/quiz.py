@@ -124,6 +124,39 @@ def _compute_sql_accuracy(scoring_data: list[dict]) -> float:
     return correct / len(sql_rows)
 
 
+def _count_consecutive_correct_on_topic(scoring_data: list[dict], topic_id: int) -> int:
+    """Count how many of the most recent answers on *topic_id* were correct in a row.
+
+    Iterates from newest to oldest; stops as soon as a wrong answer (on that topic) is found.
+    Answers on other topics are ignored so topic-specific streaks are tracked independently.
+    """
+    count = 0
+    for item in reversed(scoring_data):
+        if item.get("topic_id") != topic_id:
+            continue
+        if item.get("is_correct"):
+            count += 1
+        else:
+            break
+    return count
+
+
+def _count_consecutive_fail_on_topic(scoring_data: list[dict], topic_id: int) -> int:
+    """Count how many of the most recent answers on *topic_id* were wrong in a row.
+
+    Iterates from newest to oldest; stops as soon as a correct answer (on that topic) is found.
+    """
+    count = 0
+    for item in reversed(scoring_data):
+        if item.get("topic_id") != topic_id:
+            continue
+        if not item.get("is_correct"):
+            count += 1
+        else:
+            break
+    return count
+
+
 def _classify_bloom(theta: float, scoring_data: list[dict]) -> str | None:
     app_rows = [r for r in scoring_data if _normalize_question_type(r.get("question_type")) == "van_dung"]
     app_acc = sum(1 for r in app_rows if r.get("is_correct")) / len(app_rows) if app_rows else 0.0
@@ -396,6 +429,505 @@ async def _generate_and_persist_cat_question(
     return loaded_result.scalar_one_or_none()
 
 
+async def _rebuild_cat_step_from_session(
+    db: AsyncSession,
+    session: QuizSession,
+    user: User,
+) -> CATStepOut:
+    responses_result = await db.execute(
+        select(QuizResponse)
+        .where(QuizResponse.session_id == session.id)
+        .order_by(QuizResponse.id.asc())
+        .options(selectinload(QuizResponse.question).selectinload(Question.topic).selectinload(Topic.major_topic))
+    )
+    responses = responses_result.scalars().all()
+
+    scoring_data: list[dict] = []
+    for r in responses:
+        q = r.question
+        scoring_data.append(
+            {
+                "a": float(q.discrimination_a),
+                "b": float(q.difficulty_b),
+                "c": float(q.guessing_c),
+                "is_correct": r.is_correct,
+                "topic_id": q.topic_id,
+                "topic_name": q.topic.name if q.topic else str(q.topic_id),
+                "major_topic_name": q.topic.major_topic.name if q.topic and q.topic.major_topic else "",
+                "question_type": q.question_type,
+                "is_sql": _is_sql_context(
+                    q.topic.name if q.topic else "",
+                    q.topic.major_topic.name if q.topic and q.topic.major_topic else "",
+                ),
+                "guessing_flag": bool(r.guessing_flag),
+                "difficulty_level": classify_difficulty_level(float(q.difficulty_b)),
+            }
+        )
+
+    answered_count = len(responses)
+    max_questions = int(session.total_questions or 20)
+    theta_seed = float(session.theta_estimate or 0.0)
+    theta = _safe_numeric(
+        theta_seed if responses else 0.0,
+        default=0.0,
+        min_value=-999.0,
+        max_value=999.0,
+    )
+    sem = _safe_numeric(
+        standard_error_of_measurement(theta, scoring_data),
+        default=999.0,
+        min_value=0.0,
+        max_value=999.0,
+    )
+
+    stop_reason = None
+    is_completed = False
+    next_question_out = None
+    bloom_classification = None
+    applied_rules: list[str] = []
+    rule_events: list[dict] = []
+    recommendations: list[LearningRecommendation] = []
+
+    if session.completed_at:
+        is_completed = True
+        stop_reason = "Phiên đã hoàn thành"
+        recommendations.extend(await _build_recommendations(db, responses))
+        bloom_classification = _classify_bloom(theta, scoring_data)
+    elif sem < 0.3:
+        is_completed = True
+        stop_reason = "SEM < 0.3"
+        recommendations.extend(await _build_recommendations(db, responses))
+        bloom_classification = _classify_bloom(theta, scoring_data)
+    elif answered_count >= max_questions:
+        is_completed = True
+        stop_reason = "Đạt số câu tối đa"
+        recommendations.extend(await _build_recommendations(db, responses))
+        bloom_classification = _classify_bloom(theta, scoring_data)
+
+    if not is_completed and not responses:
+        settings = get_settings()
+        query = (
+            select(Question)
+            .join(Topic)
+            .join(MajorTopic)
+            .where(MajorTopic.subject_id == session.subject_id)
+            .where(Question.is_archived.is_(False))
+            .options(selectinload(Question.topic).selectinload(Topic.major_topic))
+        )
+        result = await db.execute(query)
+        pool = result.scalars().unique().all()
+
+        candidate_dicts = [
+            {
+                "id": q.id,
+                "topic_id": q.topic_id,
+                "question_type": q.question_type,
+                "discrimination_a": float(q.discrimination_a),
+                "difficulty_b": float(q.difficulty_b),
+                "guessing_c": float(q.guessing_c),
+            }
+            for q in pool
+        ]
+
+        recent_answered_ids = await _recent_answered_question_ids(
+            db=db,
+            user_id=user.id,
+            subject_id=session.subject_id,
+            window_size=int(settings.CAT_RECENT_QUESTION_WINDOW),
+        )
+        if recent_answered_ids:
+            fresh_candidates = [q for q in candidate_dicts if q["id"] not in recent_answered_ids]
+            if fresh_candidates:
+                candidate_dicts = fresh_candidates
+
+        next_q_dict = None
+        # ---------------------------------------------------------------
+        # R1: Khởi tạo phiên CAT – Initialization Rule (recovery path)
+        #   answered_count == 0 => select b ∈ [-1.5, -0.5] AND a > 1.2
+        # ---------------------------------------------------------------
+        r1_candidates = [
+            q for q in candidate_dicts
+            if -1.5 <= float(q["difficulty_b"]) <= -0.5 and float(q["discrimination_a"]) > 1.2
+        ]
+        next_q_dict = select_best_by_fisher(r1_candidates, current_theta=0.0)
+        if not next_q_dict:
+            opening_candidates = prioritize_high_discrimination(candidate_dicts, top_n=10)
+            next_q_dict = select_best_by_fisher(opening_candidates, current_theta=0.0)
+        if not next_q_dict:
+            next_q_dict = select_next_adaptive(candidate_dicts, current_theta=0.0, answered_ids=set())
+        if not next_q_dict:
+            llm_runtime_settings = await get_effective_llm_runtime_config(db)
+            start_topic_id = await _pick_start_topic_id_for_cat(db, session.subject_id, None)
+            if start_topic_id is not None:
+                generated_q = await _generate_and_persist_cat_question(
+                    db=db,
+                    user_id=user.id,
+                    subject_id=session.subject_id,
+                    topic_id=start_topic_id,
+                    theta=0.0,
+                    blocked_signatures=set(),
+                    llm_runtime_settings=llm_runtime_settings,
+                )
+                if generated_q:
+                    pool.append(generated_q)
+                    next_q_dict = {
+                        "id": generated_q.id,
+                        "difficulty_b": float(generated_q.difficulty_b),
+                        "discrimination_a": float(generated_q.discrimination_a),
+                    }
+
+        if next_q_dict:
+            next_question = next((q for q in pool if q.id == next_q_dict["id"]), None)
+            if next_question:
+                next_question_out = _question_to_out(next_question)
+                r1_matched = any(
+                    q["id"] == next_q_dict["id"]
+                    and -1.5 <= float(q["difficulty_b"]) <= -0.5
+                    and float(q["discrimination_a"]) > 1.2
+                    for q in candidate_dicts
+                )
+                if r1_matched:
+                    applied_rules = ["R1"]
+        if not next_question_out:
+            is_completed = True
+            stop_reason = "Không thể khôi phục câu hỏi hiện tại"
+
+    elif not is_completed and responses:
+        last_response = responses[-1]
+        question = last_response.question
+        is_correct = bool(last_response.is_correct)
+        guessing_suspected = bool(last_response.guessing_flag)
+
+        if guessing_suspected:
+            _append_rule(
+                applied_rules,
+                rule_events,
+                "R7",
+                "Correct < 10s with c > 0.2 => suspected guessing; damp theta update (weight 0.5)",
+                question_id=question.id,
+            )
+            recommendations.append(
+                LearningRecommendation(
+                    topic_id=question.topic_id,
+                    topic_name=question.topic.name if question.topic else "",
+                    prerequisite_topic_id=None,
+                    prerequisite_topic_name=None,
+                    reason="Có khả năng đoán mò (đúng < 10 giây, c > 0.2) - giảm mức tăng theta",
+                )
+            )
+
+        settings = get_settings()
+        llm_runtime_settings = await get_effective_llm_runtime_config(db)
+        answered_ids = {r.question_id for r in responses}
+        answered_signatures = {_question_signature_from_model(r.question) for r in responses}
+        recent_answered_ids = await _recent_answered_question_ids(
+            db=db,
+            user_id=user.id,
+            subject_id=session.subject_id,
+            window_size=int(settings.CAT_RECENT_QUESTION_WINDOW),
+        )
+
+        candidate_rows = await db.execute(
+            select(
+                Question.id,
+                Question.topic_id,
+                Question.question_type,
+                Question.discrimination_a,
+                Question.difficulty_b,
+                Question.guessing_c,
+                Topic.name.label("topic_name"),
+                MajorTopic.name.label("major_topic_name"),
+            )
+            .select_from(Question)
+            .join(Topic, Topic.id == Question.topic_id)
+            .join(MajorTopic, MajorTopic.id == Topic.major_topic_id)
+            .where(MajorTopic.subject_id == session.subject_id)
+            .where(Question.is_archived.is_(False))
+        )
+        candidate_dicts = [
+            {
+                "id": row.id,
+                "topic_id": row.topic_id,
+                "question_type": row.question_type,
+                "discrimination_a": float(row.discrimination_a),
+                "difficulty_b": float(row.difficulty_b),
+                "guessing_c": float(row.guessing_c),
+                "topic_name": row.topic_name,
+                "major_topic_name": row.major_topic_name,
+            }
+            for row in candidate_rows
+        ]
+
+        # ---------------------------------------------------------------
+        # R8: Ràng buộc lặp – Deduplication / No-Repeat Constraint
+        #   IF Question_ID already in User_Session_History or recent window
+        #   THEN exclude from candidate pool.
+        # ---------------------------------------------------------------
+        unanswered_fresh = [
+            q for q in candidate_dicts
+            if q["id"] not in answered_ids and q["id"] not in recent_answered_ids
+        ]
+        unanswered = (
+            unanswered_fresh
+            if unanswered_fresh
+            else [q for q in candidate_dicts if q["id"] not in answered_ids]
+        )
+        min_gap = min(
+            (abs(float(q["difficulty_b"]) - float(theta)) for q in unanswered),
+            default=99.0,
+        )
+
+        # ---------- Compute consecutive streaks for rule application ----------
+        consecutive_correct_on_topic = _count_consecutive_correct_on_topic(
+            scoring_data, question.topic_id
+        )
+        consecutive_fail_on_topic = _count_consecutive_fail_on_topic(
+            scoring_data, question.topic_id
+        )
+
+        # b_target derived from last answer (used by R2 / R3)
+        if is_correct:
+            b_target = float(theta) + 0.5   # R2: step up difficulty
+        else:
+            b_target = float(theta) - 0.7   # R3: step down difficulty
+        b_target = max(-3.0, min(3.0, b_target))
+
+        # ---------------------------------------------------------------
+        # R11: Quan hệ Tiên quyết – Prerequisite Fallback
+        #   IF User fails Topic X >= 2 times consecutively
+        #   AND Relation(Topic_Y, Prerequisite, Topic_X) exists in Ontology
+        #   THEN select an easy question (b ≈ -1.0) from Topic Y
+        #   to reinforce foundational knowledge before continuing Topic X.
+        # ---------------------------------------------------------------
+        if not next_question_out and consecutive_fail_on_topic >= 2:
+            prereq_result = await db.execute(
+                select(TopicPrerequisite).where(
+                    TopicPrerequisite.topic_id == question.topic_id
+                )
+            )
+            prereq_links = prereq_result.scalars().all()
+            if prereq_links:
+                prereq_topic_ids = {p.prerequisite_topic_id for p in prereq_links}
+                r11_candidates = [
+                    q for q in unanswered if q["topic_id"] in prereq_topic_ids
+                ]
+                r11_pick = _pick_min_b_gap(r11_candidates, target_b=-1.0)
+                if r11_pick:
+                    _append_rule(
+                        applied_rules,
+                        rule_events,
+                        "R11",
+                        (
+                            f"Consecutive fails >= 2 on topic_id={question.topic_id} "
+                            f"=> prerequisite topic reinforcement at b≈-1.0"
+                        ),
+                        question_id=int(r11_pick["id"]),
+                    )
+                    r11_q_result = await db.execute(
+                        select(Question)
+                        .where(Question.id == r11_pick["id"])
+                        .options(selectinload(Question.topic).selectinload(Topic.major_topic))
+                    )
+                    r11_q = r11_q_result.scalar_one_or_none()
+                    if r11_q:
+                        next_question_out = _question_to_out(r11_q)
+
+        # ---------- Build filtered question pool for R2/R3 ----------
+        filtered_pool = list(unanswered)
+
+        # ---------------------------------------------------------------
+        # R5: Đảm bảo bao phủ chủ đề – Topic Coverage Rotation
+        #   IF 3+ consecutive correct answers on Topic X
+        #   THEN switch to a different topic (exclude Topic X from pool).
+        # ---------------------------------------------------------------
+        if consecutive_correct_on_topic >= 3:
+            other_topic_pool = [
+                q for q in filtered_pool if q["topic_id"] != question.topic_id
+            ]
+            if other_topic_pool:
+                filtered_pool = other_topic_pool
+                _append_rule(
+                    applied_rules,
+                    rule_events,
+                    "R5",
+                    (
+                        f"3+ consecutive correct on topic_id={question.topic_id} "
+                        f"=> switch to different topic for coverage"
+                    ),
+                    question_id=None,
+                )
+
+        # ---------------------------------------------------------------
+        # R6: Lọc trình độ cao – High Ability Filter
+        #   IF theta > 1.0
+        #   THEN exclude Nhận biết (recognition-level) questions from pool.
+        # ---------------------------------------------------------------
+        if float(theta) > 1.0:
+            above_basic_pool = [
+                q for q in filtered_pool
+                if _normalize_question_type(q.get("question_type")) != "nhan_biet"
+            ]
+            if above_basic_pool:
+                filtered_pool = above_basic_pool
+                _append_rule(
+                    applied_rules,
+                    rule_events,
+                    "R6",
+                    f"theta = {float(theta):.2f} > 1.0 => exclude Nhan biet questions",
+                    question_id=None,
+                )
+
+        # ---------------------------------------------------------------
+        # R4: Tối ưu hóa phân loại giai đoạn đầu – Early-phase High-a Priority
+        #   IF answered_count <= 5
+        #   THEN prioritize high discrimination (a) items for faster theta convergence.
+        # ---------------------------------------------------------------
+        if answered_count <= 5:
+            high_a_shortlist = prioritize_high_discrimination(filtered_pool, top_n=10)
+            if high_a_shortlist:
+                filtered_pool = high_a_shortlist
+                _append_rule(
+                    applied_rules,
+                    rule_events,
+                    "R4",
+                    "Early CAT (answered <= 5): prioritize high-a shortlist for faster theta convergence",
+                    question_id=None,
+                )
+
+        # ---------------------------------------------------------------
+        # R2: Tăng độ khó – Increase Difficulty on Correct Answer
+        #   b_target = theta_current + 0.5
+        # R3: Giảm độ khó – Decrease Difficulty on Wrong Answer
+        #   b_target = theta_current - 0.7
+        # ---------------------------------------------------------------
+        if not next_question_out:
+            r23_pick = _pick_min_b_gap(filtered_pool, target_b=b_target)
+            if r23_pick:
+                rule_code = "R2" if is_correct else "R3"
+                reason = (
+                    f"Correct => b_target = theta + 0.5 = {b_target:.2f}"
+                    if is_correct
+                    else f"Wrong => b_target = theta - 0.7 = {b_target:.2f}"
+                )
+                _append_rule(
+                    applied_rules,
+                    rule_events,
+                    rule_code,
+                    reason,
+                    question_id=int(r23_pick["id"]),
+                )
+                r23_q_result = await db.execute(
+                    select(Question)
+                    .where(Question.id == r23_pick["id"])
+                    .options(selectinload(Question.topic).selectinload(Topic.major_topic))
+                )
+                r23_q = r23_q_result.scalar_one_or_none()
+                if r23_q:
+                    next_question_out = _question_to_out(r23_q)
+
+        # ---------------------------------------------------------------
+        # R9: Kích hoạt sinh câu hỏi LLM – LLM Hybrid Generation Trigger
+        #   IF no close item in DB (min_gap > 0.45)
+        #   THEN trigger LLM generation at b_target for highest-error topic.
+        # R10: LLM Scoring_Agent assigns b_estimated based on reasoning steps.
+        # ---------------------------------------------------------------
+        if (
+            not next_question_out
+            and llm_runtime_settings.get("cat_enable_hybrid_llm_on_answer")
+            and min_gap > 0.45
+        ):
+            error_rates = topic_error_rates(scoring_data)
+            preferred_topic_id = None
+            if error_rates:
+                preferred_topic_id = max(error_rates.items(), key=lambda kv: kv[1])[0]
+            if preferred_topic_id is None and responses:
+                preferred_topic_id = responses[-1].question.topic_id
+            if preferred_topic_id is None and candidate_dicts:
+                preferred_topic_id = candidate_dicts[0]["topic_id"]
+
+            if preferred_topic_id is not None:
+                _append_rule(
+                    applied_rules,
+                    rule_events,
+                    "R9",
+                    (
+                        f"min_gap = {min_gap:.2f} > 0.45 => no close item in DB; "
+                        f"trigger LLM to generate question at b_target={b_target:.2f}"
+                    ),
+                    question_id=None,
+                )
+                generated_q = await _generate_and_persist_cat_question(
+                    db=db,
+                    user_id=user.id,
+                    subject_id=session.subject_id,
+                    topic_id=preferred_topic_id,
+                    theta=float(theta),
+                    blocked_signatures=answered_signatures,
+                    llm_runtime_settings=llm_runtime_settings,
+                )
+                if generated_q:
+                    _append_rule(
+                        applied_rules,
+                        rule_events,
+                        "R10",
+                        "LLM Scoring_Agent assigned b_estimated based on reasoning steps",
+                        question_id=generated_q.id,
+                    )
+                    next_question_out = _question_to_out(generated_q)
+
+        # ---------------------------------------------------------------
+        # Safety Fallback: Pure Fisher Information Selection
+        # ---------------------------------------------------------------
+        if not next_question_out:
+            next_q_dict = select_next_adaptive(
+                candidate_dicts, current_theta=theta, answered_ids=answered_ids
+            )
+            if next_q_dict:
+                next_q_result = await db.execute(
+                    select(Question)
+                    .where(Question.id == next_q_dict["id"])
+                    .options(selectinload(Question.topic).selectinload(Topic.major_topic))
+                )
+                next_q = next_q_result.scalar_one_or_none()
+                if next_q:
+                    next_question_out = _question_to_out(next_q)
+
+        if not next_question_out:
+            is_completed = True
+            stop_reason = "Hết câu hỏi phù hợp"
+            recommendations.extend(await _build_recommendations(db, responses))
+            bloom_classification = _classify_bloom(theta, scoring_data)
+
+    if bloom_classification:
+        # ---------------------------------------------------------------
+        # BLOOM: Phân loại năng lực Bloom – Bloom Ability Classification
+        #   IF theta > 1.5 AND Vận dụng accuracy > 80%
+        #   THEN classify as "ứng dụng xuất sắc"; displayed in results report.
+        # ---------------------------------------------------------------
+        _append_rule(
+            applied_rules,
+            rule_events,
+            "BLOOM",
+            "Final theta > 1.5 and Van dung accuracy > 80%: top-level mastery achieved",
+            question_id=next_question_out.id if next_question_out else None,
+        )
+
+    return CATStepOut(
+        session_id=session.id,
+        question=next_question_out,
+        theta=round(float(theta), 3),
+        sem=round(float(sem), 3),
+        answered_count=answered_count,
+        max_questions=max_questions,
+        is_completed=is_completed,
+        stop_reason=stop_reason,
+        bloom_classification=bloom_classification,
+        applied_rules=applied_rules,
+        theta_history=_theta_history_from_responses(responses),
+        recommendations=recommendations,
+    )
+
+
 @router.post("/start-cat", response_model=CATStepOut)
 async def start_cat_quiz(
     config: QuizConfig,
@@ -469,18 +1001,27 @@ async def start_cat_quiz(
         if fresh_candidates:
             candidate_dicts = fresh_candidates
 
-    # R1: Initialization rule (first item): pick b≈0 and a>1.2.
+    # ---------------------------------------------------------------
+    # R1: Khởi tạo phiên CAT – Initialization Rule
+    #   IF answered_count == 0 (first question of session)
+    #   THEN select from pool where b ∈ [-1.5, -0.5] AND a > 1.2
+    #   Rationale: start with an easy-to-medium item that has high discrimination
+    #   so the system can quickly narrow the theta estimate from the default (0.0).
+    #   Falls back to high-a shortlist → full Fisher pool → LLM bootstrap.
+    # ---------------------------------------------------------------
     r1_candidates = [
         q for q in candidate_dicts
-        if abs(float(q["difficulty_b"])) <= 0.4 and float(q["discrimination_a"]) > 1.2
+        if -1.5 <= float(q["difficulty_b"]) <= -0.5 and float(q["discrimination_a"]) > 1.2
     ]
     next_q_dict = select_best_by_fisher(r1_candidates, current_theta=0.0)
     if not next_q_dict:
+        # Fallback: any high-a item (no strict b range)
         opening_candidates = prioritize_high_discrimination(candidate_dicts, top_n=10)
         next_q_dict = select_best_by_fisher(opening_candidates, current_theta=0.0)
     if not next_q_dict:
         next_q_dict = select_next_adaptive(candidate_dicts, current_theta=0.0, answered_ids=set())
     if not next_q_dict:
+        # R9 bootstrap: trigger LLM when no suitable question found in DB
         llm_runtime_settings = await get_effective_llm_runtime_config(db)
         start_topic_id = await _pick_start_topic_id_for_cat(db, config.subject_id, config.topic_ids)
         if start_topic_id is not None:
@@ -506,6 +1047,12 @@ async def start_cat_quiz(
 
     await db.commit()
 
+    r1_matched = bool(next_q_dict and any(
+        q["id"] == next_q_dict["id"]
+        and -1.5 <= float(q["difficulty_b"]) <= -0.5
+        and float(q["discrimination_a"]) > 1.2
+        for q in candidate_dicts
+    ))
     return CATStepOut(
         session_id=session.id,
         question=_question_to_out(next_question) if next_question else None,
@@ -515,10 +1062,7 @@ async def start_cat_quiz(
         max_questions=config.num_questions,
         is_completed=False,
         bloom_classification=None,
-        applied_rules=["R1"] if next_q_dict and any(
-            q["id"] == next_q_dict["id"] and abs(float(q["difficulty_b"])) <= 0.4 and float(q["discrimination_a"]) > 1.2
-            for q in candidate_dicts
-        ) else [],
+        applied_rules=["R1"] if r1_matched else [],
         theta_history=[0.0],
         recommendations=[],
     )
@@ -667,7 +1211,7 @@ async def answer_cat_question(
     )
     question = q_result.scalar_one_or_none()
     if not question:
-        raise HTTPException(status_code=404, detail="Question not found")
+        return await _rebuild_cat_step_from_session(db, session, user)
 
     major_topic = question.topic.major_topic if question.topic else None
     if not major_topic or major_topic.subject_id != session.subject_id:
@@ -680,10 +1224,16 @@ async def answer_cat_question(
         )
     )
     if existing_result.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail="Question already answered")
+        return await _rebuild_cat_step_from_session(db, session, user)
 
     is_correct = payload.user_answer.upper() == question.correct_answer.upper()
-    guessing_suspected = is_correct and (payload.time_spent_seconds or 0) < 5 and float(question.guessing_c) > 0.25
+    # ---------------------------------------------------------------
+    # R7: Kiểm soát đoán mò – Guessing Control
+    #   IF answer is correct AND time_spent < 10s AND c > 0.2
+    #   THEN suspected guessing: damp theta update weight to 0.5
+    #   to prevent lucky-guess inflation of ability estimate.
+    # ---------------------------------------------------------------
+    guessing_suspected = is_correct and (payload.time_spent_seconds or 0) < 10 and float(question.guessing_c) > 0.2
     response_row = QuizResponse(
         session_id=session_id,
         question_id=payload.question_id,
@@ -774,8 +1324,8 @@ async def answer_cat_question(
         _append_rule(
             applied_rules,
             rule_events,
-            "R6",
-            "Correct < 5s with c > 0.25 => suspected guessing; damp theta update",
+            "R7",
+            "Correct < 10s with c > 0.2 => suspected guessing; damp theta update (weight 0.5)",
             question_id=payload.question_id,
         )
         recommendations.append(
@@ -784,7 +1334,7 @@ async def answer_cat_question(
                 topic_name=question.topic.name if question.topic else "",
                 prerequisite_topic_id=None,
                 prerequisite_topic_name=None,
-                reason="Có khả năng đoán mò (đúng < 5 giây, c > 0.25) - giảm mức tăng theta",
+                reason="Có khả năng đoán mò (đúng < 10 giây, c > 0.2) - giảm mức tăng theta",
             )
         )
 
@@ -864,124 +1414,197 @@ async def answer_cat_question(
                 "guessing_c": float(row.guessing_c),
                 "topic_name": row.topic_name,
                 "major_topic_name": row.major_topic_name,
-                "is_sql": _is_sql_context(row.topic_name, row.major_topic_name),
             }
             for row in candidate_rows
         ]
 
+        # ---------------------------------------------------------------
+        # R8: Ràng buộc lặp – Deduplication / No-Repeat Constraint
+        #   IF Question_ID already in User_Session_History or recent window
+        #   THEN exclude from candidate pool.
+        #   (Applied globally here; fresh pool preferred over stale.)
+        # ---------------------------------------------------------------
         unanswered_fresh = [
             q for q in candidate_dicts
             if q["id"] not in answered_ids and q["id"] not in recent_answered_ids
         ]
-        unanswered = unanswered_fresh if unanswered_fresh else [q for q in candidate_dicts if q["id"] not in answered_ids]
-        min_gap = min((abs(float(q["difficulty_b"]) - float(theta)) for q in unanswered), default=99.0)
+        unanswered = (
+            unanswered_fresh
+            if unanswered_fresh
+            else [q for q in candidate_dicts if q["id"] not in answered_ids]
+        )
+        min_gap = min(
+            (abs(float(q["difficulty_b"]) - float(theta)) for q in unanswered),
+            default=99.0,
+        )
 
-        # R2: Correct + previous type is Nhan biet => force next in same topic with Thong hieu.
-        if is_correct and _normalize_question_type(question.question_type) == "nhan_biet":
-            r2_candidates = [
-                q for q in unanswered
-                if q["topic_id"] == question.topic_id and _normalize_question_type(q.get("question_type")) == "thong_hieu"
-            ]
-            r2_pick = _pick_min_b_gap(r2_candidates, target_b=theta)
-            if r2_pick:
-                _append_rule(
-                    applied_rules,
-                    rule_events,
-                    "R2",
-                    "Correct Nhan biet => next Thong hieu in same topic",
-                    question_id=int(r2_pick["id"]),
-                )
-                next_q_result = await db.execute(
-                    select(Question)
-                    .where(Question.id == r2_pick["id"])
-                    .options(selectinload(Question.topic).selectinload(Topic.major_topic))
-                )
-                next_q = next_q_result.scalar_one_or_none()
-                if next_q:
-                    next_question_out = _question_to_out(next_q)
+        # ---------- Compute consecutive streaks for rule application ----------
+        consecutive_correct_on_topic = _count_consecutive_correct_on_topic(
+            scoring_data, question.topic_id
+        )
+        consecutive_fail_on_topic = _count_consecutive_fail_on_topic(
+            scoring_data, question.topic_id
+        )
 
-        # R5: Weak SQL (<50%) after >3 answers => easier SQL at theta-0.5.
-        if not next_question_out and answered_count > 3 and _compute_sql_accuracy(scoring_data) < 0.5:
-            target_b = float(theta) - 0.5
-            r5_candidates = [
-                q for q in unanswered
-                if q.get("is_sql") and float(q["difficulty_b"]) <= target_b
+        # b_target derived from last answer (used by R2 / R3)
+        if is_correct:
+            b_target = float(theta) + 0.5   # R2: step up difficulty
+        else:
+            b_target = float(theta) - 0.7   # R3: step down difficulty
+        b_target = max(-3.0, min(3.0, b_target))
+
+        # ---------------------------------------------------------------
+        # R11: Quan hệ Tiên quyết – Prerequisite Fallback
+        #   IF User fails Topic X >= 2 times consecutively
+        #   AND Relation(Topic_Y, Prerequisite, Topic_X) exists in Ontology
+        #   THEN select an easy question (b ≈ -1.0) from Topic Y
+        #   to reinforce foundational knowledge before continuing Topic X.
+        #   (Highest-priority override; checked before adaptive rules.)
+        # ---------------------------------------------------------------
+        if not next_question_out and consecutive_fail_on_topic >= 2:
+            prereq_result = await db.execute(
+                select(TopicPrerequisite).where(
+                    TopicPrerequisite.topic_id == question.topic_id
+                )
+            )
+            prereq_links = prereq_result.scalars().all()
+            if prereq_links:
+                prereq_topic_ids = {p.prerequisite_topic_id for p in prereq_links}
+                r11_candidates = [
+                    q for q in unanswered if q["topic_id"] in prereq_topic_ids
+                ]
+                r11_pick = _pick_min_b_gap(r11_candidates, target_b=-1.0)
+                if r11_pick:
+                    _append_rule(
+                        applied_rules,
+                        rule_events,
+                        "R11",
+                        (
+                            f"Consecutive fails >= 2 on topic_id={question.topic_id} "
+                            f"=> prerequisite topic reinforcement at b≈-1.0"
+                        ),
+                        question_id=int(r11_pick["id"]),
+                    )
+                    r11_q_result = await db.execute(
+                        select(Question)
+                        .where(Question.id == r11_pick["id"])
+                        .options(selectinload(Question.topic).selectinload(Topic.major_topic))
+                    )
+                    r11_q = r11_q_result.scalar_one_or_none()
+                    if r11_q:
+                        next_question_out = _question_to_out(r11_q)
+
+        # ---------- Build filtered question pool for R2/R3 ----------
+        # R5 and R6 are pool-level filters applied before the b_target pick.
+        filtered_pool = list(unanswered)
+
+        # ---------------------------------------------------------------
+        # R5: Đảm bảo bao phủ chủ đề – Topic Coverage Rotation
+        #   IF số_câu_đúng_liên_tiếp(Topic_X) >= 3
+        #   THEN filter out Topic_X to switch to a peer topic in the Ontology.
+        #   Prevents over-testing a single topic; ensures breadth of assessment.
+        # ---------------------------------------------------------------
+        if consecutive_correct_on_topic >= 3:
+            other_topic_pool = [
+                q for q in filtered_pool if q["topic_id"] != question.topic_id
             ]
-            r5_pick = _pick_min_b_gap(r5_candidates, target_b=target_b)
-            if r5_pick:
+            if other_topic_pool:
+                filtered_pool = other_topic_pool
                 _append_rule(
                     applied_rules,
                     rule_events,
                     "R5",
-                    "SQL accuracy < 50% after >3 answers => easier SQL at theta-0.5",
-                    question_id=int(r5_pick["id"]),
+                    (
+                        f"3+ consecutive correct on topic_id={question.topic_id} "
+                        f"=> switch to different topic for coverage"
+                    ),
+                    question_id=None,
                 )
-                next_q_result = await db.execute(
-                    select(Question)
-                    .where(Question.id == r5_pick["id"])
-                    .options(selectinload(Question.topic).selectinload(Topic.major_topic))
-                )
-                next_q = next_q_result.scalar_one_or_none()
-                if next_q:
-                    next_question_out = _question_to_out(next_q)
 
-        # R4: If SQL ratio > 0.6, switch to non-SQL content.
-        if not next_question_out and _compute_sql_ratio(scoring_data) > 0.6:
-            r4_candidates = [q for q in unanswered if not q.get("is_sql")]
-            r4_pick = _pick_min_b_gap(r4_candidates, target_b=theta)
-            if r4_pick:
+        # ---------------------------------------------------------------
+        # R6: Lọc trình độ cao – High Ability Filter
+        #   IF theta > 1.0
+        #   THEN exclude Nhận biết (recognition-level) questions from pool.
+        #   Students at this ability level should not waste time on trivial items.
+        # ---------------------------------------------------------------
+        if float(theta) > 1.0:
+            above_basic_pool = [
+                q for q in filtered_pool
+                if _normalize_question_type(q.get("question_type")) != "nhan_biet"
+            ]
+            if above_basic_pool:
+                filtered_pool = above_basic_pool
+                _append_rule(
+                    applied_rules,
+                    rule_events,
+                    "R6",
+                    f"theta = {float(theta):.2f} > 1.0 => exclude Nhan biet questions",
+                    question_id=None,
+                )
+
+        # ---------------------------------------------------------------
+        # R4: Tối ưu hóa phân loại giai đoạn đầu – Early-phase High-a Priority
+        #   IF answered_count <= 5
+        #   THEN sort remaining pool by discrimination a DESC (top-10 shortlist)
+        #   so the first few items converge theta quickly.
+        # ---------------------------------------------------------------
+        if answered_count <= 5:
+            high_a_shortlist = prioritize_high_discrimination(filtered_pool, top_n=10)
+            if high_a_shortlist:
+                filtered_pool = high_a_shortlist
                 _append_rule(
                     applied_rules,
                     rule_events,
                     "R4",
-                    "SQL ratio > 0.6 => switch to non-SQL content",
-                    question_id=int(r4_pick["id"]),
+                    "Early CAT (answered <= 5): prioritize high-a shortlist for faster theta convergence",
+                    question_id=None,
                 )
-                next_q_result = await db.execute(
-                    select(Question)
-                    .where(Question.id == r4_pick["id"])
-                    .options(selectinload(Question.topic).selectinload(Topic.major_topic))
-                )
-                next_q = next_q_result.scalar_one_or_none()
-                if next_q:
-                    next_question_out = _question_to_out(next_q)
 
-        # R3: Filter by rule-compatible difficulty band, then choose max Fisher information.
+        # ---------------------------------------------------------------
+        # R2: Tăng độ khó – Increase Difficulty on Correct Answer
+        #   IF User_Answer == Correct_Answer
+        #   THEN b_target = theta_current + 0.5
+        # R3: Giảm độ khó – Decrease Difficulty on Wrong Answer
+        #   IF User_Answer != Correct_Answer
+        #   THEN b_target = theta_current - 0.7
+        #   Select the question closest to b_target (min |b - b_target|),
+        #   tie-broken by highest Fisher information at current theta.
+        # ---------------------------------------------------------------
         if not next_question_out:
-            r3_gap = min((abs(float(q["difficulty_b"]) - float(theta)) for q in unanswered), default=99.0)
-            band = max(0.35, min(0.8, r3_gap + 0.2))
-            r3_candidates = [
-                q for q in unanswered
-                if abs(float(q["difficulty_b"]) - float(theta)) <= band
-            ]
-            if answered_count < 4:
-                prioritized = prioritize_high_discrimination(r3_candidates, top_n=10)
-                if prioritized:
-                    r3_candidates = prioritized
-
-            r3_pick = select_best_by_fisher(r3_candidates, current_theta=float(theta))
-            if r3_pick:
-                reason = "Select next item by max Fisher info within rule-filtered difficulty band"
-                if answered_count < 4:
-                    reason = "Early CAT: prioritize high-a shortlist, then select max Fisher info within difficulty band"
+            r23_pick = _pick_min_b_gap(filtered_pool, target_b=b_target)
+            if r23_pick:
+                rule_code = "R2" if is_correct else "R3"
+                reason = (
+                    f"Correct => b_target = theta + 0.5 = {b_target:.2f}"
+                    if is_correct
+                    else f"Wrong => b_target = theta - 0.7 = {b_target:.2f}"
+                )
                 _append_rule(
                     applied_rules,
                     rule_events,
-                    "R3",
+                    rule_code,
                     reason,
-                    question_id=int(r3_pick["id"]),
+                    question_id=int(r23_pick["id"]),
                 )
-                next_q_result = await db.execute(
+                r23_q_result = await db.execute(
                     select(Question)
-                    .where(Question.id == r3_pick["id"])
+                    .where(Question.id == r23_pick["id"])
                     .options(selectinload(Question.topic).selectinload(Topic.major_topic))
                 )
-                next_q = next_q_result.scalar_one_or_none()
-                if next_q:
-                    next_question_out = _question_to_out(next_q)
+                r23_q = r23_q_result.scalar_one_or_none()
+                if r23_q:
+                    next_question_out = _question_to_out(r23_q)
 
-        # Hybrid Triggered by CAT: generate by LLM when no remaining item is close to target theta.
-        # 0.45 is a practical threshold to avoid overusing LLM while still filling niche difficulty gaps.
+        # ---------------------------------------------------------------
+        # R9: Kích hoạt sinh câu hỏi LLM – LLM Hybrid Generation Trigger
+        #   IF Count(questions with |b - b_target| < 0.45) in DB < 3
+        #     (i.e., min_gap > 0.45 means the closest available item is
+        #      still far from the required difficulty)
+        #   THEN Trigger_LLM_Generate(topic_current, b_target)
+        # R10: Xác định độ khó LLM – LLM Question Difficulty Assignment
+        #   THEN use Scoring_Agent inside LLM pipeline to assign b_estimated
+        #   based on reasoning complexity of the generated question.
+        # ---------------------------------------------------------------
         if (
             not next_question_out
             and llm_runtime_settings.get("cat_enable_hybrid_llm_on_answer")
@@ -997,6 +1620,16 @@ async def answer_cat_question(
                 preferred_topic_id = candidate_dicts[0]["topic_id"]
 
             if preferred_topic_id is not None:
+                _append_rule(
+                    applied_rules,
+                    rule_events,
+                    "R9",
+                    (
+                        f"min_gap = {min_gap:.2f} > 0.45 => no close item in DB; "
+                        f"trigger LLM to generate question at b_target={b_target:.2f}"
+                    ),
+                    question_id=None,
+                )
                 generated_q = await _generate_and_persist_cat_question(
                     db=db,
                     user_id=user.id,
@@ -1007,11 +1640,24 @@ async def answer_cat_question(
                     llm_runtime_settings=llm_runtime_settings,
                 )
                 if generated_q:
+                    _append_rule(
+                        applied_rules,
+                        rule_events,
+                        "R10",
+                        "LLM Scoring_Agent assigned b_estimated based on reasoning steps",
+                        question_id=generated_q.id,
+                    )
                     next_question_out = _question_to_out(generated_q)
 
-        # Safety fallback to Fisher info if no rule picked any question.
+        # ---------------------------------------------------------------
+        # Safety Fallback: Pure Fisher Information Selection
+        #   Used when all rule-filtered pools are exhausted.
+        #   Selects the globally best item by Fisher info, ignoring rule filters.
+        # ---------------------------------------------------------------
         if not next_question_out:
-            next_q_dict = select_next_adaptive(candidate_dicts, current_theta=theta, answered_ids=answered_ids)
+            next_q_dict = select_next_adaptive(
+                candidate_dicts, current_theta=theta, answered_ids=answered_ids
+            )
             if next_q_dict:
                 next_q_result = await db.execute(
                     select(Question)
@@ -1030,11 +1676,16 @@ async def answer_cat_question(
             bloom_classification = _classify_bloom(theta, scoring_data)
 
     if bloom_classification:
+        # ---------------------------------------------------------------
+        # BLOOM: Phân loại năng lực Bloom – Bloom Ability Classification
+        #   IF theta > 1.5 AND Vận dụng accuracy > 80%
+        #   THEN classify as "ứng dụng xuất sắc"; displayed in results report.
+        # ---------------------------------------------------------------
         _append_rule(
             applied_rules,
             rule_events,
-            "R7",
-            "Final theta > 1.5 and Van dung accuracy > 80%",
+            "BLOOM",
+            "Final theta > 1.5 and Van dung accuracy > 80%: top-level mastery achieved",
             question_id=next_question_out.id if next_question_out else None,
         )
 

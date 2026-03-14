@@ -89,7 +89,7 @@ export default function AdminSettingsPage() {
       <Navbar user={user} onLogout={() => { localStorage.removeItem("kbs_token"); router.push("/"); }} />
       <main className="container py-6 space-y-6">
         <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-100 via-white to-slate-50 p-5 shadow-sm">
-          <h1 className="text-2xl font-bold tracking-tight">Admin Config</h1>
+          <h1 className="text-2xl font-bold tracking-tight">Cấu hình</h1>
           <p className="mt-1 text-sm text-muted-foreground">Quản lý cấu hình runtime cho LLM.</p>
         </div>
 
@@ -113,7 +113,7 @@ export default function AdminSettingsPage() {
                 checked={form.llm_enabled}
                 onChange={(e) => setForm((prev) => ({ ...prev, llm_enabled: e.target.checked }))}
               />
-              Enable LLM
+              Bật kết nối AI (LLM)
             </label>
 
             <label className="flex items-center gap-2 text-sm font-medium">
@@ -122,45 +122,12 @@ export default function AdminSettingsPage() {
                 checked={form.cat_enable_hybrid_llm_on_answer}
                 onChange={(e) => setForm((prev) => ({ ...prev, cat_enable_hybrid_llm_on_answer: e.target.checked }))}
               />
-              Enable Hybrid CAT LLM On Answer
+              Bật LLM kết hợp CAT khi làm bài
             </label>
 
             <p className="text-sm text-muted-foreground">
               Khi bật, CAT có thể sinh thêm câu hỏi bằng LLM ngay trong luồng trả lời nếu ngân hàng hiện tại không có câu đủ gần mức độ khó mục tiêu.
             </p>
-
-            {form.llm_enabled && (
-              <div className="space-y-4 rounded-xl border border-slate-200 bg-white/70 p-4">
-                <div className="space-y-1">
-                  <label className="text-sm font-medium">LLM API Key</label>
-                  <Input
-                    type="password"
-                    value={llmApiKeyInput}
-                    onChange={(e) => setLlmApiKeyInput(e.target.value)}
-                    placeholder={form.has_llm_api_key ? "Đã có API key, nhập giá trị mới để thay thế" : "Nhập API key"}
-                  />
-                </div>
-                <p className="text-sm text-muted-foreground">
-                  {form.has_llm_api_key
-                    ? "API key hiện có đang được lưu. Để trống nếu muốn giữ nguyên."
-                    : "Chưa có API key được lưu cho cấu hình runtime hiện tại."}
-                </p>
-
-                <div className="space-y-1">
-                  <label className="text-sm font-medium">System Prompt</label>
-                  <textarea
-                    value={form.llm_system_prompt}
-                    onChange={(e) => setForm((prev) => ({ ...prev, llm_system_prompt: e.target.value }))}
-                    rows={16}
-                    className="flex min-h-[320px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-xs outline-none transition-[color,box-shadow] placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
-                    placeholder="Nhập system prompt cho bộ sinh câu hỏi"
-                  />
-                </div>
-                <p className="text-sm text-muted-foreground">
-                  Mặc định được bootstrap từ file `backend/prompts/question_generator.system.md`, sau đó có thể chỉnh trực tiếp tại đây.
-                </p>
-              </div>
-            )}
 
             <div className="grid gap-4 md:grid-cols-2">
               <div className="space-y-1">
@@ -204,6 +171,39 @@ export default function AdminSettingsPage() {
                 />
               </div>
             </div>
+
+            {form.llm_enabled && (
+              <div>
+                <div className="space-y-1">
+                  <label className="text-sm font-medium">LLM API Key</label>
+                  <Input
+                    type="password"
+                    value={llmApiKeyInput}
+                    onChange={(e) => setLlmApiKeyInput(e.target.value)}
+                    placeholder={form.has_llm_api_key ? "Đã có API key, nhập giá trị mới để thay thế" : "Nhập API key"}
+                  />
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  {form.has_llm_api_key
+                    ? "API key hiện có đang được lưu. Để trống nếu muốn giữ nguyên."
+                    : "Chưa có API key được lưu cho cấu hình runtime hiện tại."}
+                </p>
+
+                <div className="space-y-1">
+                  <label className="text-sm font-medium">System Prompt</label>
+                  <textarea
+                    value={form.llm_system_prompt}
+                    onChange={(e) => setForm((prev) => ({ ...prev, llm_system_prompt: e.target.value }))}
+                    rows={16}
+                    className="flex min-h-[320px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-xs outline-none transition-[color,box-shadow] placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                    placeholder="Nhập system prompt cho bộ sinh câu hỏi"
+                  />
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  Mặc định được bootstrap từ file `backend/prompts/question_generator.system.md`, sau đó có thể chỉnh trực tiếp tại đây.
+                </p>
+              </div>
+            )}
 
             <Button onClick={handleSave} disabled={saving}>
               {saving ? "Đang lưu..." : "Lưu cấu hình"}

@@ -60,7 +60,7 @@ export function Navbar({ user, onLogout }: NavbarProps) {
           </Link>
           <Link href="/admin/settings" className={linkClass("/admin/settings")}>
             <SlidersHorizontal className="h-4 w-4" />
-            Admin Config
+            Cấu hình
           </Link>
         </nav>
 

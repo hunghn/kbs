@@ -609,13 +609,25 @@ export default function QuestionsPage() {
                     {generated.llm_model ? ` (${generated.llm_model})` : ""}
                   </p>
                   <div className="text-sm font-medium">
-                    <MathContent content={generated.stem} />
+                    <MathContent content={generated.stem} inline className="min-w-0"/>
                   </div>
-                  <div className="grid gap-1 text-xs text-muted-foreground md:grid-cols-2">
-                    <div>A. <MathContent content={generated.option_a} inline /></div>
-                    <div>B. <MathContent content={generated.option_b} inline /></div>
-                    <div>C. <MathContent content={generated.option_c} inline /></div>
-                    <div>D. <MathContent content={generated.option_d} inline /></div>
+                  <div className="grid gap-2 text-xs text-muted-foreground md:grid-cols-2">
+                    <div className="flex items-start gap-1.5">
+                      <span className="font-medium">A.</span>
+                      <MathContent content={generated.option_a} inline className="min-w-0" />
+                    </div>
+                    <div className="flex items-start gap-1.5">
+                      <span className="font-medium">B.</span>
+                      <MathContent content={generated.option_b} inline className="min-w-0" />
+                    </div>
+                    <div className="flex items-start gap-1.5">
+                      <span className="font-medium">C.</span>
+                      <MathContent content={generated.option_c} inline className="min-w-0" />
+                    </div>
+                    <div className="flex items-start gap-1.5">
+                      <span className="font-medium">D.</span>
+                      <MathContent content={generated.option_d} inline className="min-w-0" />
+                    </div>
                   </div>
                   <div className="grid grid-cols-2 gap-2 text-xs md:grid-cols-4">
                     <p>Đáp án: {generated.correct_answer}</p>
@@ -673,8 +685,8 @@ export default function QuestionsPage() {
                         {q.is_archived && (
                           <p className="text-[11px] font-medium text-amber-700">ARCHIVED</p>
                         )}
-                        <div className="line-clamp-2 text-sm font-medium">
-                          <MathContent content={q.stem} inline />
+                        <div className="text-sm font-medium">
+                          <MathContent content={q.stem} inline className="min-w-0"/>
                         </div>
                       </div>
                       <div className="flex gap-2">
@@ -712,11 +724,23 @@ export default function QuestionsPage() {
                       </div>
                     </div>
 
-                    <div className="mt-2 grid gap-1 text-xs text-muted-foreground sm:grid-cols-2">
-                      <p>A. <MathContent content={q.option_a} inline /></p>
-                      <p>B. <MathContent content={q.option_b} inline /></p>
-                      <p>C. <MathContent content={q.option_c} inline /></p>
-                      <p>D. <MathContent content={q.option_d} inline /></p>
+                    <div className="mt-2 grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
+                      <div className="flex items-start gap-1.5">
+                        <span className="font-medium">A.</span>
+                        <MathContent content={q.option_a} inline className="min-w-0" />
+                      </div>
+                      <div className="flex items-start gap-1.5">
+                        <span className="font-medium">B.</span>
+                        <MathContent content={q.option_b} inline className="min-w-0" />
+                      </div>
+                      <div className="flex items-start gap-1.5">
+                        <span className="font-medium">C.</span>
+                        <MathContent content={q.option_c} inline className="min-w-0" />
+                      </div>
+                      <div className="flex items-start gap-1.5">
+                        <span className="font-medium">D.</span>
+                        <MathContent content={q.option_d} inline className="min-w-0" />
+                      </div>
                     </div>
 
                     <p className="mt-2 text-[11px] text-muted-foreground">

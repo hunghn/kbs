@@ -63,10 +63,8 @@ function QuizContent() {
       if (!parsed.session_id || !parsed.step) return;
 
       if (parsed.phase === "submitting") {
-        setSessionId(parsed.session_id);
-        setStep(parsed.step);
-        setPhase("submitting");
-        router.push(`/results/${parsed.session_id}`);
+        // Prevent legacy stale submitting state from causing unexpected redirect loops.
+        clearPersistedSession();
         return;
       }
 
@@ -85,7 +83,7 @@ function QuizContent() {
 
   useEffect(() => {
     if (!user || !sessionId || !step) return;
-    if (phase !== "quiz" && phase !== "submitting") return;
+    if (phase !== "quiz") return;
 
     persistSession({
       user_id: user.id,
@@ -131,8 +129,8 @@ function QuizContent() {
   const handleFinish = (finalStep: CATStepInfo) => {
     setStep(finalStep);
     if (sessionId) {
-      setPhase("submitting");
       clearPersistedSession();
+      setPhase("submitting");
       router.push(`/results/${sessionId}`);
     }
   };

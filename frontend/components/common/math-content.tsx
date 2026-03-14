@@ -30,8 +30,38 @@ export function MathContent({ content, className, inline = false }: MathContentP
         <ReactMarkdown
           remarkPlugins={[remarkMath]}
           rehypePlugins={[rehypeKatex]}
+          unwrapDisallowed
+          disallowedElements={[
+            "p",
+            "div",
+            "ul",
+            "ol",
+            "li",
+            "blockquote",
+            "pre",
+            "table",
+            "thead",
+            "tbody",
+            "tr",
+            "th",
+            "td",
+            "h1",
+            "h2",
+            "h3",
+            "h4",
+            "h5",
+            "h6",
+          ]}
           components={{
             p: ({ children }) => <span>{children}</span>,
+            ul: ({ children }) => <span>{children}</span>,
+            ol: ({ children }) => <span>{children}</span>,
+            li: ({ children }) => <span>{children}</span>,
+            div: ({ children }) => <span>{children}</span>,
+            table: ({ children }) => <span>{children}</span>,
+            tr: ({ children }) => <span>{children}</span>,
+            td: ({ children }) => <span>{children}</span>,
+            th: ({ children }) => <span>{children}</span>,
           }}
         >
           {normalized}

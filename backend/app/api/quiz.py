@@ -1,5 +1,6 @@
 """Quiz API: Create quiz, submit answers, get results."""
 from datetime import datetime, timezone
+import math
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
@@ -30,6 +31,26 @@ from app.config import get_settings
 from app.services.runtime_settings import get_effective_llm_runtime_config
 
 router = APIRouter(prefix="/api/quiz", tags=["quiz"])
+
+
+def _safe_numeric(
+    value: float | int | None,
+    *,
+    default: float,
+    min_value: float,
+    max_value: float,
+    ndigits: int = 3,
+) -> float:
+    try:
+        parsed = float(value) if value is not None else float(default)
+    except (TypeError, ValueError):
+        parsed = float(default)
+
+    if not math.isfinite(parsed):
+        parsed = float(default)
+
+    parsed = min(max(parsed, min_value), max_value)
+    return round(parsed, ndigits)
 
 
 def _normalize_text(value: str) -> str:
@@ -712,6 +733,8 @@ async def answer_cat_question(
     else:
         theta = raw_theta
     sem = standard_error_of_measurement(theta, scoring_data)
+    theta = _safe_numeric(theta, default=0.0, min_value=-999.0, max_value=999.0)
+    sem = _safe_numeric(sem, default=999.0, min_value=0.0, max_value=999.0)
     answered_count = len(responses)
     max_questions = int(session.total_questions or 20)
 
@@ -794,7 +817,13 @@ async def answer_cat_question(
 
             progress.questions_attempted = (progress.questions_attempted or 0) + tscore["total"]
             progress.questions_correct = (progress.questions_correct or 0) + tscore["correct"]
-            progress.theta_estimate = tscore["theta"]
+            progress.theta_estimate = _safe_numeric(
+                tscore.get("theta"),
+                default=0.0,
+                min_value=-999.0,
+                max_value=999.0,
+                ndigits=2,
+            )
             progress.mastery_level = tscore["mastery"]
     else:
         settings = get_settings()
@@ -1217,7 +1246,13 @@ async def submit_answers(
     session.completed_at = datetime.now(timezone.utc)
     session.correct_answers = score_result["score"]
     session.total_score = score_result["accuracy"] * 100
-    session.theta_estimate = score_result["theta"]
+    session.theta_estimate = _safe_numeric(
+        score_result.get("theta"),
+        default=0.0,
+        min_value=-999.0,
+        max_value=999.0,
+        ndigits=2,
+    )
 
     # Update user topic progress
     for tname, tscore in score_result["topic_scores"].items():
@@ -1246,7 +1281,13 @@ async def submit_answers(
 
         progress.questions_attempted = (progress.questions_attempted or 0) + tscore["total"]
         progress.questions_correct = (progress.questions_correct or 0) + tscore["correct"]
-        progress.theta_estimate = tscore["theta"]
+        progress.theta_estimate = _safe_numeric(
+            tscore.get("theta"),
+            default=0.0,
+            min_value=-999.0,
+            max_value=999.0,
+            ndigits=2,
+        )
         progress.mastery_level = tscore["mastery"]
 
     await db.commit()

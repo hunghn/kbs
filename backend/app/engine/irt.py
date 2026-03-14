@@ -123,9 +123,12 @@ def total_test_information(theta: float, responses: list[dict]) -> float:
 def standard_error_of_measurement(theta: float, responses: list[dict]) -> float:
     """SEM = 1 / sqrt(I(theta)). Smaller is better."""
     info = total_test_information(theta, responses)
-    if info <= 1e-12:
+    if not math.isfinite(info) or info <= 1e-12:
         return 999.0
-    return 1.0 / math.sqrt(info)
+    sem = 1.0 / math.sqrt(info)
+    if not math.isfinite(sem):
+        return 999.0
+    return min(max(sem, 0.0), 999.0)
 
 
 def estimate_theta_eap(

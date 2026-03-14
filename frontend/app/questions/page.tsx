@@ -17,7 +17,7 @@ import { Navbar } from "@/components/layout/navbar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Sparkles, Filter, WandSparkles } from "lucide-react";
+import { Sparkles, Filter, WandSparkles, Pencil, Archive, ArchiveRestore, Trash2 } from "lucide-react";
 
 interface QuestionFormState {
   external_id: string;
@@ -598,14 +598,36 @@ export default function QuestionsPage() {
                         <p className="line-clamp-2 text-sm font-medium">{q.stem}</p>
                       </div>
                       <div className="flex gap-2">
-                        <Button size="sm" variant="outline" onClick={() => fillForm(q)} disabled={q.is_archived}>
-                          Sửa
+                        <Button
+                          size="icon"
+                          variant="outline"
+                          onClick={() => fillForm(q)}
+                          disabled={q.is_archived}
+                          title="Sửa"
+                          aria-label="Sửa câu hỏi"
+                          className="h-9 w-9 text-sky-600 hover:text-sky-700"
+                        >
+                          <Pencil className="h-4 w-4" />
                         </Button>
-                        <Button size="sm" variant="secondary" onClick={() => handleArchiveToggle(q)}>
-                          {q.is_archived ? "Bỏ archive" : "Archive"}
+                        <Button
+                          size="icon"
+                          variant="secondary"
+                          onClick={() => handleArchiveToggle(q)}
+                          title={q.is_archived ? "Bỏ archive" : "Archive"}
+                          aria-label={q.is_archived ? "Bỏ archive câu hỏi" : "Archive câu hỏi"}
+                          className={q.is_archived ? "h-9 w-9 text-emerald-700 hover:text-emerald-800" : "h-9 w-9 text-amber-700 hover:text-amber-800"}
+                        >
+                          {q.is_archived ? <ArchiveRestore className="h-4 w-4" /> : <Archive className="h-4 w-4" />}
                         </Button>
-                        <Button size="sm" variant="destructive" onClick={() => handleDelete(q.id)}>
-                          Xóa
+                        <Button
+                          size="icon"
+                          variant="destructive"
+                          onClick={() => handleDelete(q.id)}
+                          title="Xóa"
+                          aria-label="Xóa câu hỏi"
+                          className="h-9 w-9"
+                        >
+                          <Trash2 className="h-4 w-4" />
                         </Button>
                       </div>
                     </div>

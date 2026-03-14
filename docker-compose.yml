@@ -1,0 +1,44 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: kbs_user
+      POSTGRES_PASSWORD: kbs_pass
+      POSTGRES_DB: kbs_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kbs_user -d kbs_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: "postgresql+asyncpg://kbs_user:kbs_pass@db:5432/kbs_db"
+      DATABASE_URL_SYNC: "postgresql+psycopg2://kbs_user:kbs_pass@db:5432/kbs_db"
+      SECRET_KEY: "change-this-in-production-use-strong-random-key"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+      - ./MaTranKienThuc.xlsx:/data/MaTranKienThuc.xlsx
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+
+volumes:
+  pgdata:

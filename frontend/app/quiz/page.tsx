@@ -7,6 +7,16 @@ import { Navbar } from "@/components/layout/navbar";
 import { QuizSetup } from "@/components/quiz/quiz-setup";
 import { QuizInterface } from "@/components/quiz/quiz-interface";
 
+const CAT_SESSION_STORAGE_KEY = "kbs_active_cat_session_v1";
+
+type PersistedCatSession = {
+  user_id: number;
+  session_id: number;
+  phase: "quiz" | "submitting";
+  step: CATStepInfo;
+  updated_at: number;
+};
+
 function QuizContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -15,6 +25,16 @@ function QuizContent() {
   const [sessionId, setSessionId] = useState<number | null>(null);
   const [step, setStep] = useState<CATStepInfo | null>(null);
   const [phase, setPhase] = useState<"setup" | "quiz" | "submitting">("setup");
+
+  const clearPersistedSession = useCallback(() => {
+    if (typeof window === "undefined") return;
+    localStorage.removeItem(CAT_SESSION_STORAGE_KEY);
+  }, []);
+
+  const persistSession = useCallback((payload: PersistedCatSession) => {
+    if (typeof window === "undefined") return;
+    localStorage.setItem(CAT_SESSION_STORAGE_KEY, JSON.stringify(payload));
+  }, []);
 
   const checkAuth = useCallback(async () => {
     try {
@@ -31,6 +51,51 @@ function QuizContent() {
     checkAuth();
   }, [checkAuth]);
 
+  useEffect(() => {
+    if (!user || typeof window === "undefined") return;
+
+    const raw = localStorage.getItem(CAT_SESSION_STORAGE_KEY);
+    if (!raw) return;
+
+    try {
+      const parsed = JSON.parse(raw) as PersistedCatSession;
+      if (parsed.user_id !== user.id) return;
+      if (!parsed.session_id || !parsed.step) return;
+
+      if (parsed.phase === "submitting") {
+        setSessionId(parsed.session_id);
+        setStep(parsed.step);
+        setPhase("submitting");
+        router.push(`/results/${parsed.session_id}`);
+        return;
+      }
+
+      if (parsed.step.is_completed) {
+        clearPersistedSession();
+        return;
+      }
+
+      setSessionId(parsed.session_id);
+      setStep(parsed.step);
+      setPhase("quiz");
+    } catch {
+      clearPersistedSession();
+    }
+  }, [user, router, clearPersistedSession]);
+
+  useEffect(() => {
+    if (!user || !sessionId || !step) return;
+    if (phase !== "quiz" && phase !== "submitting") return;
+
+    persistSession({
+      user_id: user.id,
+      session_id: sessionId,
+      phase,
+      step,
+      updated_at: Date.now(),
+    });
+  }, [user, sessionId, step, phase, persistSession]);
+
   const handleStartQuiz = async (config: {
     subject_id: number;
     num_questions: number;
@@ -38,10 +103,23 @@ function QuizContent() {
     comprehension_pct: number;
     application_pct: number;
   }) => {
+    if (!config.subject_id || config.subject_id <= 0) {
+      throw new Error("Bạn phải chọn môn học trước khi bắt đầu");
+    }
+
     const catStart = await quizAPI.startCAT(config);
     setSessionId(catStart.session_id);
     setStep(catStart);
     setPhase("quiz");
+    if (user) {
+      persistSession({
+        user_id: user.id,
+        session_id: catStart.session_id,
+        phase: "quiz",
+        step: catStart,
+        updated_at: Date.now(),
+      });
+    }
   };
 
   const handleAnswer = async (payload: { question_id: number; user_answer: string; time_spent_seconds: number }) => {
@@ -54,6 +132,7 @@ function QuizContent() {
     setStep(finalStep);
     if (sessionId) {
       setPhase("submitting");
+      clearPersistedSession();
       router.push(`/results/${sessionId}`);
     }
   };
@@ -66,7 +145,7 @@ function QuizContent() {
 
   return (
     <div className="min-h-screen">
-      <Navbar user={user} onLogout={() => { localStorage.removeItem("kbs_token"); router.push("/"); }} />
+      <Navbar user={user} onLogout={() => { localStorage.removeItem("kbs_token"); clearPersistedSession(); router.push("/"); }} />
       <main className="container py-6">
         {phase === "setup" && (
           <QuizSetup

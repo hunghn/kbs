@@ -21,7 +21,7 @@ interface QuizSetupProps {
 }
 
 export function QuizSetup({ subjects, defaultSubjectId, onStart }: QuizSetupProps) {
-  const [subjectId, setSubjectId] = useState(defaultSubjectId || subjects[0]?.id || 0);
+  const [subjectId, setSubjectId] = useState<number>(0);
   const [numQuestions, setNumQuestions] = useState(20);
   const [recognition, setRecognition] = useState(30);
   const [comprehension, setComprehension] = useState(50);
@@ -29,7 +29,19 @@ export function QuizSetup({ subjects, defaultSubjectId, onStart }: QuizSetupProp
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  useEffect(() => {
+    if (!defaultSubjectId) return;
+    if (subjects.some((s) => s.id === defaultSubjectId)) {
+      setSubjectId(defaultSubjectId);
+    }
+  }, [defaultSubjectId, subjects]);
+
   const handleStart = async () => {
+    if (!subjectId || !subjects.some((s) => s.id === subjectId)) {
+      setError("Bạn phải chọn môn học trước khi bắt đầu");
+      return;
+    }
+
     const total = recognition + comprehension + application;
     if (total !== 100) {
       setError(`Tổng tỷ lệ phải bằng 100% (hiện tại: ${total}%)`);
@@ -85,6 +97,11 @@ export function QuizSetup({ subjects, defaultSubjectId, onStart }: QuizSetupProp
                 </Button>
               ))}
             </div>
+            {subjectId === 0 && (
+              <p className="text-xs text-muted-foreground">
+                Chưa chọn môn học.
+              </p>
+            )}
           </div>
 
           <div className="space-y-2">

@@ -17,7 +17,7 @@ import { Navbar } from "@/components/layout/navbar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Sparkles, Filter, WandSparkles, Pencil, Archive, ArchiveRestore, Trash2 } from "lucide-react";
+import { Sparkles, Filter, WandSparkles, Pencil, Archive, ArchiveRestore, Trash2, ChevronLeft, ChevronRight } from "lucide-react";
 
 interface QuestionFormState {
   external_id: string;
@@ -53,6 +53,8 @@ const emptyForm: QuestionFormState = {
   time_display: "01:00",
 };
 
+const PAGE_SIZE = 100;
+
 export default function QuestionsPage() {
   const router = useRouter();
   const [user, setUser] = useState<{ id: number; username: string } | null>(null);
@@ -64,6 +66,9 @@ export default function QuestionsPage() {
   const [selectedTopicFilter, setSelectedTopicFilter] = useState<number | null>(null);
   const [search, setSearch] = useState("");
   const [includeArchived, setIncludeArchived] = useState(true);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [hasNextPage, setHasNextPage] = useState(false);
+  const [totalQuestions, setTotalQuestions] = useState(0);
 
   const [questions, setQuestions] = useState<QuestionManageItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -123,10 +128,13 @@ export default function QuestionsPage() {
       topic_id: selectedTopicFilter ?? undefined,
       search: search.trim() || undefined,
       include_archived: includeArchived,
-      limit: 200,
+      skip: (currentPage - 1) * PAGE_SIZE,
+      limit: PAGE_SIZE,
     });
-    setQuestions(list);
-  }, [includeArchived, search, selectedSubjectId, selectedTopicFilter]);
+    setQuestions(list.items);
+    setTotalQuestions(list.total);
+    setHasNextPage((list.skip + list.items.length) < list.total);
+  }, [currentPage, includeArchived, search, selectedSubjectId, selectedTopicFilter]);
 
   useEffect(() => {
     checkAuthAndLoad();
@@ -371,6 +379,15 @@ export default function QuestionsPage() {
 
   const archivedCount = questions.filter((q) => q.is_archived).length;
   const activeCount = questions.length - archivedCount;
+  const rangeStart = totalQuestions === 0 ? 0 : (currentPage - 1) * PAGE_SIZE + 1;
+  const rangeEnd = totalQuestions === 0 ? 0 : Math.min(currentPage * PAGE_SIZE, totalQuestions);
+  const totalPages = Math.max(1, Math.ceil(totalQuestions / PAGE_SIZE));
+  const pageOptions = Array.from({ length: totalPages }, (_, idx) => {
+    const page = idx + 1;
+    const start = (page - 1) * PAGE_SIZE + 1;
+    const end = Math.min(page * PAGE_SIZE, totalQuestions);
+    return { page, label: `${start} - ${end}` };
+  });
 
   return (
     <div className="min-h-screen">
@@ -388,7 +405,8 @@ export default function QuestionsPage() {
           <div className="mt-4 grid gap-3 sm:grid-cols-3">
             <div className="rounded-lg border bg-white p-3">
               <p className="text-xs text-muted-foreground">Tổng câu hỏi</p>
-              <p className="text-2xl font-semibold">{questions.length}</p>
+              <p className="text-2xl font-semibold">{totalQuestions}</p>
+              <p className="text-[11px] text-muted-foreground">Trang {currentPage}</p>
             </div>
             <div className="rounded-lg border bg-white p-3">
               <p className="text-xs text-muted-foreground">Đang hoạt động</p>
@@ -413,6 +431,7 @@ export default function QuestionsPage() {
                     const nextSubject = Number(e.target.value);
                     setSelectedSubjectId(nextSubject);
                     setSelectedTopicFilter(null);
+                    setCurrentPage(1);
                     resetForm();
                   }}
                 >
@@ -431,6 +450,7 @@ export default function QuestionsPage() {
                   onChange={(e) => {
                     const nextTopic = e.target.value ? Number(e.target.value) : null;
                     setSelectedTopicFilter(nextTopic);
+                    setCurrentPage(1);
                     if (nextTopic) {
                       setForm((prev) => ({ ...prev, topic_id: nextTopic }));
                     }
@@ -564,7 +584,7 @@ export default function QuestionsPage() {
                     onChange={(e) => setSearch(e.target.value)}
                     placeholder="Nhập từ khóa trong stem..."
                   />
-                  <Button onClick={() => loadQuestions()} variant="outline" className="shrink-0">
+                  <Button onClick={() => setCurrentPage(1)} variant="outline" className="shrink-0">
                     <Filter className="mr-1 h-4 w-4" /> Lọc
                   </Button>
                 </div>
@@ -574,7 +594,10 @@ export default function QuestionsPage() {
                 <input
                   type="checkbox"
                   checked={includeArchived}
-                  onChange={(e) => setIncludeArchived(e.target.checked)}
+                  onChange={(e) => {
+                    setIncludeArchived(e.target.checked);
+                    setCurrentPage(1);
+                  }}
                 />
                 Hiển thị cả câu đã archive
               </label>
@@ -645,6 +668,42 @@ export default function QuestionsPage() {
                   </div>
                 ))}
               </div>
+
+              <div className="flex items-center justify-between rounded-lg border bg-slate-50 px-3 py-2">
+                <p className="text-xs text-muted-foreground">
+                  {rangeStart}-{rangeEnd}/{totalQuestions}
+                </p>
+                <div className="flex items-center gap-2">
+                  <select
+                    className="h-9 rounded-md border border-input bg-background px-2 text-xs"
+                    value={currentPage}
+                    onChange={(e) => setCurrentPage(Number(e.target.value))}
+                    disabled={totalQuestions === 0}
+                  >
+                    {pageOptions.map((opt) => (
+                      <option key={opt.page} value={opt.page}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+                    disabled={currentPage === 1 || totalQuestions === 0}
+                  >
+                    <ChevronLeft className="mr-1 h-4 w-4" /> Trước
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setCurrentPage((prev) => prev + 1)}
+                    disabled={!hasNextPage}
+                  >
+                    Sau <ChevronRight className="ml-1 h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
             </CardContent>
           </Card>
 
@@ -653,99 +712,141 @@ export default function QuestionsPage() {
               <p className="text-sm text-muted-foreground">
                 {editingId ? `Đang chỉnh sửa câu #${editingId}` : (selectedTopic ? `Topic hiện tại: ${selectedTopic.name}` : "Chọn topic để nhập câu hỏi")}
               </p>
-              <Input
-                placeholder="External ID (VD: DM999)"
-                value={form.external_id}
-                onChange={(e) => setForm((prev) => ({ ...prev, external_id: e.target.value }))}
-              />
+              <div className="space-y-1">
+                <label className="text-sm font-medium">External ID</label>
+                <Input
+                  placeholder="VD: DM999"
+                  value={form.external_id}
+                  onChange={(e) => setForm((prev) => ({ ...prev, external_id: e.target.value }))}
+                />
+              </div>
 
-              <select
-                className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                value={form.topic_id}
-                onChange={(e) => setForm((prev) => ({ ...prev, topic_id: Number(e.target.value) }))}
-              >
-                {topics.map((topic) => (
-                  <option key={topic.id} value={topic.id}>
-                    {topic.name}
-                  </option>
-                ))}
-              </select>
-
-              <textarea
-                className="min-h-[90px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                placeholder="Nội dung câu hỏi"
-                value={form.stem}
-                onChange={(e) => setForm((prev) => ({ ...prev, stem: e.target.value }))}
-              />
-
-              <Input
-                placeholder="Đáp án A"
-                value={form.option_a}
-                onChange={(e) => setForm((prev) => ({ ...prev, option_a: e.target.value }))}
-              />
-              <Input
-                placeholder="Đáp án B"
-                value={form.option_b}
-                onChange={(e) => setForm((prev) => ({ ...prev, option_b: e.target.value }))}
-              />
-              <Input
-                placeholder="Đáp án C"
-                value={form.option_c}
-                onChange={(e) => setForm((prev) => ({ ...prev, option_c: e.target.value }))}
-              />
-              <Input
-                placeholder="Đáp án D"
-                value={form.option_d}
-                onChange={(e) => setForm((prev) => ({ ...prev, option_d: e.target.value }))}
-              />
-
-              <div className="grid gap-3 sm:grid-cols-3">
+              <div className="space-y-1">
+                <label className="text-sm font-medium">Topic</label>
                 <select
                   className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                  value={form.correct_answer}
-                  onChange={(e) => setForm((prev) => ({ ...prev, correct_answer: e.target.value }))}
+                  value={form.topic_id}
+                  onChange={(e) => setForm((prev) => ({ ...prev, topic_id: Number(e.target.value) }))}
                 >
-                  <option value="A">Đáp án đúng: A</option>
-                  <option value="B">Đáp án đúng: B</option>
-                  <option value="C">Đáp án đúng: C</option>
-                  <option value="D">Đáp án đúng: D</option>
+                  {topics.map((topic) => (
+                    <option key={topic.id} value={topic.id}>
+                      {topic.name}
+                    </option>
+                  ))}
                 </select>
+              </div>
 
-                <Input
-                  placeholder="Độ khó b"
-                  value={form.difficulty_b}
-                  onChange={(e) => setForm((prev) => ({ ...prev, difficulty_b: e.target.value }))}
+              <div className="space-y-1">
+                <label className="text-sm font-medium">Nội dung câu hỏi</label>
+                <textarea
+                  className="min-h-[90px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  placeholder="Nhập stem của câu hỏi"
+                  value={form.stem}
+                  onChange={(e) => setForm((prev) => ({ ...prev, stem: e.target.value }))}
                 />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-sm font-medium">Đáp án A</label>
                 <Input
-                  placeholder="Phân biệt a"
-                  value={form.discrimination_a}
-                  onChange={(e) => setForm((prev) => ({ ...prev, discrimination_a: e.target.value }))}
+                  placeholder="Nội dung đáp án A"
+                  value={form.option_a}
+                  onChange={(e) => setForm((prev) => ({ ...prev, option_a: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-sm font-medium">Đáp án B</label>
+                <Input
+                  placeholder="Nội dung đáp án B"
+                  value={form.option_b}
+                  onChange={(e) => setForm((prev) => ({ ...prev, option_b: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-sm font-medium">Đáp án C</label>
+                <Input
+                  placeholder="Nội dung đáp án C"
+                  value={form.option_c}
+                  onChange={(e) => setForm((prev) => ({ ...prev, option_c: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-sm font-medium">Đáp án D</label>
+                <Input
+                  placeholder="Nội dung đáp án D"
+                  value={form.option_d}
+                  onChange={(e) => setForm((prev) => ({ ...prev, option_d: e.target.value }))}
                 />
               </div>
 
               <div className="grid gap-3 sm:grid-cols-3">
-                <Input
-                  placeholder="Đoán mò c"
-                  value={form.guessing_c}
-                  onChange={(e) => setForm((prev) => ({ ...prev, guessing_c: e.target.value }))}
-                />
-                <Input
-                  placeholder="Loại câu hỏi"
-                  value={form.question_type}
-                  onChange={(e) => setForm((prev) => ({ ...prev, question_type: e.target.value }))}
-                />
-                <Input
-                  placeholder="Thời gian (giây)"
-                  value={form.time_limit_seconds}
-                  onChange={(e) => setForm((prev) => ({ ...prev, time_limit_seconds: e.target.value }))}
-                />
+                <div className="space-y-1">
+                  <label className="text-sm font-medium">Đáp án đúng</label>
+                  <select
+                    className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    value={form.correct_answer}
+                    onChange={(e) => setForm((prev) => ({ ...prev, correct_answer: e.target.value }))}
+                  >
+                    <option value="A">A</option>
+                    <option value="B">B</option>
+                    <option value="C">C</option>
+                    <option value="D">D</option>
+                  </select>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-sm font-medium">Độ khó b</label>
+                  <Input
+                    placeholder="Ví dụ: 0.5"
+                    value={form.difficulty_b}
+                    onChange={(e) => setForm((prev) => ({ ...prev, difficulty_b: e.target.value }))}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-sm font-medium">Độ phân biệt a</label>
+                  <Input
+                    placeholder="Ví dụ: 1.2"
+                    value={form.discrimination_a}
+                    onChange={(e) => setForm((prev) => ({ ...prev, discrimination_a: e.target.value }))}
+                  />
+                </div>
               </div>
 
-              <Input
-                placeholder="Hiển thị thời gian (MM:SS), để trống để tự tính"
-                value={form.time_display}
-                onChange={(e) => setForm((prev) => ({ ...prev, time_display: e.target.value }))}
-              />
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="space-y-1">
+                  <label className="text-sm font-medium">Đoán mò c</label>
+                  <Input
+                    placeholder="Ví dụ: 0.25"
+                    value={form.guessing_c}
+                    onChange={(e) => setForm((prev) => ({ ...prev, guessing_c: e.target.value }))}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-sm font-medium">Loại câu hỏi</label>
+                  <Input
+                    placeholder="VD: thong_hieu"
+                    value={form.question_type}
+                    onChange={(e) => setForm((prev) => ({ ...prev, question_type: e.target.value }))}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-sm font-medium">Thời gian (giây)</label>
+                  <Input
+                    placeholder="Ví dụ: 60"
+                    value={form.time_limit_seconds}
+                    onChange={(e) => setForm((prev) => ({ ...prev, time_limit_seconds: e.target.value }))}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-sm font-medium">Thời gian hiển thị (MM:SS)</label>
+                <Input
+                  placeholder="Để trống để tự tính"
+                  value={form.time_display}
+                  onChange={(e) => setForm((prev) => ({ ...prev, time_display: e.target.value }))}
+                />
+              </div>
 
               <div className="flex gap-2">
                 <Button onClick={handleSave} disabled={isSaving}>

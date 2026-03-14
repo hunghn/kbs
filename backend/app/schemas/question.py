@@ -80,6 +80,13 @@ class QuestionManageOut(BaseModel):
     is_archived: bool = False
 
 
+class QuestionManageListOut(BaseModel):
+    items: list[QuestionManageOut]
+    total: int
+    skip: int
+    limit: int
+
+
 class QuestionWithAnswer(QuestionOut):
     correct_answer: str
     difficulty_b: float

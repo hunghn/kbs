@@ -1,7 +1,7 @@
 """Question management API: CRUD for question bank."""
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -10,7 +10,7 @@ from app.database import get_db
 from app.models.knowledge import Topic, MajorTopic
 from app.models.question import Question
 from app.models.user import User, QuizResponse
-from app.schemas.question import QuestionCreate, QuestionManageOut, QuestionUpdate
+from app.schemas.question import QuestionCreate, QuestionManageListOut, QuestionManageOut, QuestionUpdate
 
 router = APIRouter(prefix="/api/questions", tags=["questions"])
 
@@ -38,7 +38,7 @@ def _to_manage_out(q: Question) -> QuestionManageOut:
     )
 
 
-@router.get("", response_model=list[QuestionManageOut])
+@router.get("", response_model=QuestionManageListOut)
 async def list_questions(
     subject_id: int | None = None,
     topic_id: int | None = None,
@@ -50,6 +50,23 @@ async def list_questions(
     user: User = Depends(get_current_user),
 ):
     _ = user
+    base_query = select(Question.id)
+    if not include_archived:
+        base_query = base_query.where(Question.is_archived.is_(False))
+
+    if topic_id is not None:
+        base_query = base_query.where(Question.topic_id == topic_id)
+    elif subject_id is not None:
+        base_query = base_query.join(Topic).join(MajorTopic).where(MajorTopic.subject_id == subject_id)
+
+    if search:
+        base_query = base_query.where(Question.stem.ilike(f"%{search}%"))
+
+    total_result = await db.execute(
+        select(func.count()).select_from(base_query.subquery())
+    )
+    total = int(total_result.scalar_one() or 0)
+
     query = select(Question).options(selectinload(Question.topic).selectinload(Topic.major_topic))
     if not include_archived:
         query = query.where(Question.is_archived.is_(False))
@@ -66,7 +83,12 @@ async def list_questions(
 
     result = await db.execute(query)
     questions = result.scalars().unique().all()
-    return [_to_manage_out(q) for q in questions]
+    return QuestionManageListOut(
+        items=[_to_manage_out(q) for q in questions],
+        total=total,
+        skip=max(0, int(skip)),
+        limit=min(max(1, int(limit)), 200),
+    )
 
 
 @router.get("/{question_id}", response_model=QuestionManageOut)

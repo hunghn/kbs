@@ -143,7 +143,7 @@ export const questionsAPI = {
     if (params.skip !== undefined) query.set("skip", String(params.skip));
     if (params.limit !== undefined) query.set("limit", String(params.limit));
     const suffix = query.toString() ? `?${query.toString()}` : "";
-    return fetchAPI<QuestionManageItem[]>(`/questions${suffix}`);
+    return fetchAPI<QuestionManageListInfo>(`/questions${suffix}`);
   },
 
   getById: (questionId: number) =>
@@ -364,6 +364,13 @@ export interface QuestionManageItem {
   time_limit_seconds: number;
   time_display?: string;
   is_archived: boolean;
+}
+
+export interface QuestionManageListInfo {
+  items: QuestionManageItem[];
+  total: number;
+  skip: number;
+  limit: number;
 }
 
 export interface QuizSubmitResult {

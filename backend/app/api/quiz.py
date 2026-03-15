@@ -10,7 +10,7 @@ from app.api.auth import get_current_user
 from app.models.user import User, QuizSession, QuizResponse, UserTopicProgress, InferenceRuleLog
 from app.models.question import Question
 from app.models.knowledge import Topic, MajorTopic, TopicPrerequisite, Subject
-from app.models.cat_knowledge import UserAbility
+from app.models.cat_knowledge import UserAbility, KnowledgeGraph
 from app.schemas.question import (
     QuizConfig, QuestionOut, QuizSessionOut, AnswerSubmit,
     QuizResultOut, QuizResultDetail, QuestionWithAnswer, CATAnswerSubmit, CATStepOut,
@@ -157,6 +157,112 @@ def _count_consecutive_fail_on_topic(scoring_data: list[dict], topic_id: int) ->
     return count
 
 
+async def _pick_r12_computation_target_topic(
+    db: AsyncSession,
+    *,
+    user_id: int,
+    subject_id: int,
+    candidate_topic_ids: set[int],
+    session_scoring_data: list[dict] | None = None,
+) -> tuple[int | None, list[int]]:
+    """Pick Topic_C where prerequisites are already mastered (A, B -> C style).
+
+    R12 intent: when learner has demonstrated mastery in prerequisite topics,
+    infer higher readiness for dependent topic and prioritize it.
+
+    Mastery evidence is merged from:
+    1) persisted progress (UserTopicProgress), and
+    2) current session signals in scoring_data.
+    """
+    if not candidate_topic_ids:
+        return None, []
+
+    edges_result = await db.execute(
+        select(KnowledgeGraph.source_id, KnowledgeGraph.target_id)
+        .where(KnowledgeGraph.subject_id == subject_id)
+        .where(KnowledgeGraph.source_type == "topic")
+        .where(KnowledgeGraph.target_type == "topic")
+        .where(KnowledgeGraph.relation_type == "prerequisite")
+    )
+    edges = edges_result.all()
+    if not edges:
+        return None, []
+
+    prereq_map: dict[int, set[int]] = {}
+    for source_id, target_id in edges:
+        prereq_map.setdefault(int(source_id), set()).add(int(target_id))
+
+    # Strict R12 gating: require at least 2 mastered prerequisites to mimic A,B -> C.
+    prerequisites_by_topic = {
+        topic_id: sorted(list(prereqs))
+        for topic_id, prereqs in prereq_map.items()
+        if topic_id in candidate_topic_ids and len(prereqs) >= 2
+    }
+    if not prerequisites_by_topic:
+        return None, []
+
+    all_prereq_ids = {
+        prereq_id for prereq_ids in prerequisites_by_topic.values() for prereq_id in prereq_ids
+    }
+    if not all_prereq_ids:
+        return None, []
+
+    mastery_rank = {
+        "novice": 0,
+        "beginner": 1,
+        "developing": 2,
+        "proficient": 3,
+        "master": 4,
+    }
+
+    mastered_prereq_ids: set[int] = set()
+
+    progress_result = await db.execute(
+        select(UserTopicProgress)
+        .where(UserTopicProgress.user_id == user_id)
+        .where(UserTopicProgress.topic_id.in_(all_prereq_ids))
+    )
+    progresses = progress_result.scalars().all()
+    for p in progresses:
+        level = (p.mastery_level or "").strip().lower()
+        theta_val = float(p.theta_estimate or 0.0)
+        if mastery_rank.get(level, 0) >= 3 or theta_val >= 0.7:
+            mastered_prereq_ids.add(int(p.topic_id))
+
+    # Add in-session mastery evidence so R12 can react within the current CAT session.
+    session_scoring_data = session_scoring_data or []
+    per_topic: dict[int, dict[str, float]] = {}
+    for row in session_scoring_data:
+        topic_id_raw = row.get("topic_id")
+        if topic_id_raw is None:
+            continue
+        topic_id = int(topic_id_raw)
+        if topic_id not in all_prereq_ids:
+            continue
+        agg = per_topic.setdefault(topic_id, {"total": 0.0, "correct": 0.0})
+        agg["total"] += 1.0
+        if bool(row.get("is_correct")):
+            agg["correct"] += 1.0
+
+    for topic_id, agg in per_topic.items():
+        total = float(agg["total"])
+        correct = float(agg["correct"])
+        accuracy = (correct / total) if total > 0 else 0.0
+        # Session-based mastery heuristic: enough evidence and stable accuracy.
+        if total >= 2.0 and accuracy >= 0.75:
+            mastered_prereq_ids.add(int(topic_id))
+
+    best_topic_id = None
+    best_prereqs: list[int] = []
+    for topic_id, prereq_ids in prerequisites_by_topic.items():
+        if all(pr in mastered_prereq_ids for pr in prereq_ids):
+            if best_topic_id is None or len(prereq_ids) > len(best_prereqs):
+                best_topic_id = topic_id
+                best_prereqs = prereq_ids
+
+    return best_topic_id, best_prereqs
+
+
 def _classify_bloom(theta: float, scoring_data: list[dict]) -> str | None:
     app_rows = [r for r in scoring_data if _normalize_question_type(r.get("question_type")) == "van_dung"]
     app_acc = sum(1 for r in app_rows if r.get("is_correct")) / len(app_rows) if app_rows else 0.0
@@ -200,21 +306,53 @@ def _question_to_out(q: Question) -> QuestionOut:
     )
 
 
-def _theta_history_from_responses(responses: list[QuizResponse]) -> list[float]:
+def _theta_history_from_scoring_data(scoring_data: list[dict]) -> list[float]:
+    """Build theta timeline step-by-step, including R7 damping behavior."""
     history = [0.0]
-    scoring_data = []
+    rolling_data: list[dict] = []
     current_theta = 0.0
+
+    for row in scoring_data:
+        rolling_data.append(
+            {
+                "a": float(row["a"]),
+                "b": float(row["b"]),
+                "c": float(row["c"]),
+                "is_correct": bool(row["is_correct"]),
+            }
+        )
+        raw_theta = estimate_theta(rolling_data, initial_theta=current_theta)
+        if bool(row.get("guessing_flag")):
+            # Keep timeline consistent with runtime theta damping under R7.
+            current_theta = current_theta + 0.3 * (raw_theta - current_theta)
+        else:
+            current_theta = raw_theta
+
+        current_theta = _safe_numeric(
+            current_theta,
+            default=0.0,
+            min_value=-999.0,
+            max_value=999.0,
+        )
+        history.append(round(float(current_theta), 3))
+
+    return history
+
+
+def _theta_history_from_responses(responses: list[QuizResponse]) -> list[float]:
+    scoring_data = []
     for r in responses:
         q = r.question
-        scoring_data.append({
-            "a": float(q.discrimination_a),
-            "b": float(q.difficulty_b),
-            "c": float(q.guessing_c),
-            "is_correct": r.is_correct,
-        })
-        current_theta = estimate_theta(scoring_data, initial_theta=current_theta)
-        history.append(round(current_theta, 3))
-    return history
+        scoring_data.append(
+            {
+                "a": float(q.discrimination_a),
+                "b": float(q.difficulty_b),
+                "c": float(q.guessing_c),
+                "is_correct": bool(r.is_correct),
+                "guessing_flag": bool(r.guessing_flag),
+            }
+        )
+    return _theta_history_from_scoring_data(scoring_data)
 
 
 async def _recent_answered_question_ids(
@@ -663,10 +801,23 @@ async def _rebuild_cat_step_from_session(
         #   IF Question_ID already in User_Session_History or recent window
         #   THEN exclude from candidate pool.
         # ---------------------------------------------------------------
+        # Treat only cross-session history as true R8 signal; ignore already-answered ids in current session.
+        cross_session_recent_ids = recent_answered_ids - answered_ids
         unanswered_fresh = [
             q for q in candidate_dicts
-            if q["id"] not in answered_ids and q["id"] not in recent_answered_ids
+            if q["id"] not in answered_ids and q["id"] not in cross_session_recent_ids
         ]
+        if cross_session_recent_ids and unanswered_fresh:
+            _append_rule(
+                applied_rules,
+                rule_events,
+                "R8",
+                (
+                    f"Excluded {len(cross_session_recent_ids)} cross-session recent question(s) "
+                    "from cross-session dedup window"
+                ),
+                question_id=None,
+            )
         unanswered = (
             unanswered_fresh
             if unanswered_fresh
@@ -691,6 +842,35 @@ async def _rebuild_cat_step_from_session(
         else:
             b_target = float(theta) - 0.7   # R3: step down difficulty
         b_target = max(-3.0, min(3.0, b_target))
+
+        # ---------------------------------------------------------------
+        # R12: Suy diễn Mạng tính toán – Computation Network Inference
+        #   IF mastered(A) AND mastered(B) AND prereq(A,B -> C) in graph
+        #   THEN prioritize Topic_C, boost local theta seed for selection,
+        #   and skip Nhận biết items for Topic_C when possible.
+        # ---------------------------------------------------------------
+        r12_target_topic_id = None
+        r12_prereq_ids: list[int] = []
+        if consecutive_fail_on_topic < 2:
+            r12_target_topic_id, r12_prereq_ids = await _pick_r12_computation_target_topic(
+                db,
+                user_id=user.id,
+                subject_id=session.subject_id,
+                candidate_topic_ids={q["topic_id"] for q in unanswered},
+                session_scoring_data=scoring_data,
+            )
+            if r12_target_topic_id is not None:
+                _append_rule(
+                    applied_rules,
+                    rule_events,
+                    "R12",
+                    (
+                        f"Mastered prerequisites {r12_prereq_ids} => infer readiness for "
+                        f"topic_id={r12_target_topic_id}; prioritize topic and skip Nhan biet"
+                    ),
+                    question_id=None,
+                )
+                b_target = max(-3.0, min(3.0, b_target + 0.2))
 
         # ---------------------------------------------------------------
         # R11: Quan hệ Tiên quyết – Prerequisite Fallback
@@ -735,6 +915,17 @@ async def _rebuild_cat_step_from_session(
         # ---------- Build filtered question pool for R2/R3 ----------
         filtered_pool = list(unanswered)
 
+        if r12_target_topic_id is not None:
+            r12_pool = [q for q in filtered_pool if q["topic_id"] == r12_target_topic_id]
+            r12_advanced_pool = [
+                q for q in r12_pool
+                if _normalize_question_type(q.get("question_type")) != "nhan_biet"
+            ]
+            if r12_advanced_pool:
+                filtered_pool = r12_advanced_pool
+            elif r12_pool:
+                filtered_pool = r12_pool
+
         # ---------------------------------------------------------------
         # R5: Đảm bảo bao phủ chủ đề – Topic Coverage Rotation
         #   IF 3+ consecutive correct answers on Topic X
@@ -759,10 +950,10 @@ async def _rebuild_cat_step_from_session(
 
         # ---------------------------------------------------------------
         # R6: Lọc trình độ cao – High Ability Filter
-        #   IF theta > 1.0
+        #   IF theta > 1.0 AND answered_count >= 3 AND SEM < 1.0
         #   THEN exclude Nhận biết (recognition-level) questions from pool.
         # ---------------------------------------------------------------
-        if float(theta) > 1.0:
+        if float(theta) > 1.0 and answered_count >= 3 and float(sem) < 1.0:
             above_basic_pool = [
                 q for q in filtered_pool
                 if _normalize_question_type(q.get("question_type")) != "nhan_biet"
@@ -773,16 +964,19 @@ async def _rebuild_cat_step_from_session(
                     applied_rules,
                     rule_events,
                     "R6",
-                    f"theta = {float(theta):.2f} > 1.0 => exclude Nhan biet questions",
+                    (
+                        f"theta = {float(theta):.2f} > 1.0, answered_count = {answered_count} >= 3, "
+                        f"SEM = {float(sem):.3f} < 1.0 => exclude Nhan biet questions"
+                    ),
                     question_id=None,
                 )
 
         # ---------------------------------------------------------------
         # R4: Tối ưu hóa phân loại giai đoạn đầu – Early-phase High-a Priority
-        #   IF answered_count <= 5
+        #   IF 2 <= answered_count <= 5
         #   THEN prioritize high discrimination (a) items for faster theta convergence.
         # ---------------------------------------------------------------
-        if answered_count <= 5:
+        if 2 <= answered_count <= 5:
             high_a_shortlist = prioritize_high_discrimination(filtered_pool, top_n=10)
             if high_a_shortlist:
                 filtered_pool = high_a_shortlist
@@ -790,7 +984,7 @@ async def _rebuild_cat_step_from_session(
                     applied_rules,
                     rule_events,
                     "R4",
-                    "Early CAT (answered <= 5): prioritize high-a shortlist for faster theta convergence",
+                    "Early CAT (2 <= answered <= 5): prioritize high-a shortlist for faster theta convergence",
                     question_id=None,
                 )
 
@@ -923,7 +1117,7 @@ async def _rebuild_cat_step_from_session(
         stop_reason=stop_reason,
         bloom_classification=bloom_classification,
         applied_rules=applied_rules,
-        theta_history=_theta_history_from_responses(responses),
+        theta_history=_theta_history_from_scoring_data(scoring_data),
         recommendations=recommendations,
     )
 
@@ -1424,10 +1618,23 @@ async def answer_cat_question(
         #   THEN exclude from candidate pool.
         #   (Applied globally here; fresh pool preferred over stale.)
         # ---------------------------------------------------------------
+        # Treat only cross-session history as true R8 signal; ignore already-answered ids in current session.
+        cross_session_recent_ids = recent_answered_ids - answered_ids
         unanswered_fresh = [
             q for q in candidate_dicts
-            if q["id"] not in answered_ids and q["id"] not in recent_answered_ids
+            if q["id"] not in answered_ids and q["id"] not in cross_session_recent_ids
         ]
+        if cross_session_recent_ids and unanswered_fresh:
+            _append_rule(
+                applied_rules,
+                rule_events,
+                "R8",
+                (
+                    f"Excluded {len(cross_session_recent_ids)} cross-session recent question(s) "
+                    "from cross-session dedup window"
+                ),
+                question_id=None,
+            )
         unanswered = (
             unanswered_fresh
             if unanswered_fresh
@@ -1452,6 +1659,35 @@ async def answer_cat_question(
         else:
             b_target = float(theta) - 0.7   # R3: step down difficulty
         b_target = max(-3.0, min(3.0, b_target))
+
+        # ---------------------------------------------------------------
+        # R12: Suy diễn Mạng tính toán – Computation Network Inference
+        #   IF mastered(A) AND mastered(B) AND prereq(A,B -> C) in graph
+        #   THEN prioritize Topic_C, boost local theta seed for selection,
+        #   and skip Nhận biết items for Topic_C when possible.
+        # ---------------------------------------------------------------
+        r12_target_topic_id = None
+        r12_prereq_ids: list[int] = []
+        if consecutive_fail_on_topic < 2:
+            r12_target_topic_id, r12_prereq_ids = await _pick_r12_computation_target_topic(
+                db,
+                user_id=user.id,
+                subject_id=session.subject_id,
+                candidate_topic_ids={q["topic_id"] for q in unanswered},
+                session_scoring_data=scoring_data,
+            )
+            if r12_target_topic_id is not None:
+                _append_rule(
+                    applied_rules,
+                    rule_events,
+                    "R12",
+                    (
+                        f"Mastered prerequisites {r12_prereq_ids} => infer readiness for "
+                        f"topic_id={r12_target_topic_id}; prioritize topic and skip Nhan biet"
+                    ),
+                    question_id=None,
+                )
+                b_target = max(-3.0, min(3.0, b_target + 0.2))
 
         # ---------------------------------------------------------------
         # R11: Quan hệ Tiên quyết – Prerequisite Fallback
@@ -1498,6 +1734,17 @@ async def answer_cat_question(
         # R5 and R6 are pool-level filters applied before the b_target pick.
         filtered_pool = list(unanswered)
 
+        if r12_target_topic_id is not None:
+            r12_pool = [q for q in filtered_pool if q["topic_id"] == r12_target_topic_id]
+            r12_advanced_pool = [
+                q for q in r12_pool
+                if _normalize_question_type(q.get("question_type")) != "nhan_biet"
+            ]
+            if r12_advanced_pool:
+                filtered_pool = r12_advanced_pool
+            elif r12_pool:
+                filtered_pool = r12_pool
+
         # ---------------------------------------------------------------
         # R5: Đảm bảo bao phủ chủ đề – Topic Coverage Rotation
         #   IF số_câu_đúng_liên_tiếp(Topic_X) >= 3
@@ -1523,11 +1770,11 @@ async def answer_cat_question(
 
         # ---------------------------------------------------------------
         # R6: Lọc trình độ cao – High Ability Filter
-        #   IF theta > 1.0
+        #   IF theta > 1.0 AND answered_count >= 3 AND SEM < 1.0
         #   THEN exclude Nhận biết (recognition-level) questions from pool.
         #   Students at this ability level should not waste time on trivial items.
         # ---------------------------------------------------------------
-        if float(theta) > 1.0:
+        if float(theta) > 1.0 and answered_count >= 3 and float(sem) < 1.0:
             above_basic_pool = [
                 q for q in filtered_pool
                 if _normalize_question_type(q.get("question_type")) != "nhan_biet"
@@ -1538,17 +1785,20 @@ async def answer_cat_question(
                     applied_rules,
                     rule_events,
                     "R6",
-                    f"theta = {float(theta):.2f} > 1.0 => exclude Nhan biet questions",
+                    (
+                        f"theta = {float(theta):.2f} > 1.0, answered_count = {answered_count} >= 3, "
+                        f"SEM = {float(sem):.3f} < 1.0 => exclude Nhan biet questions"
+                    ),
                     question_id=None,
                 )
 
         # ---------------------------------------------------------------
         # R4: Tối ưu hóa phân loại giai đoạn đầu – Early-phase High-a Priority
-        #   IF answered_count <= 5
+        #   IF 2 <= answered_count <= 5
         #   THEN sort remaining pool by discrimination a DESC (top-10 shortlist)
         #   so the first few items converge theta quickly.
         # ---------------------------------------------------------------
-        if answered_count <= 5:
+        if 2 <= answered_count <= 5:
             high_a_shortlist = prioritize_high_discrimination(filtered_pool, top_n=10)
             if high_a_shortlist:
                 filtered_pool = high_a_shortlist
@@ -1556,7 +1806,7 @@ async def answer_cat_question(
                     applied_rules,
                     rule_events,
                     "R4",
-                    "Early CAT (answered <= 5): prioritize high-a shortlist for faster theta convergence",
+                    "Early CAT (2 <= answered <= 5): prioritize high-a shortlist for faster theta convergence",
                     question_id=None,
                 )
 
@@ -1713,7 +1963,7 @@ async def answer_cat_question(
         stop_reason=stop_reason,
         bloom_classification=bloom_classification,
         applied_rules=applied_rules,
-        theta_history=_theta_history_from_responses(responses),
+        theta_history=_theta_history_from_scoring_data(scoring_data),
         recommendations=recommendations,
     )
 

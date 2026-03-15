@@ -170,9 +170,9 @@ Trong đó:
 
 ### R4. Luật tối ưu giai đoạn đầu
 
-- IF `số_câu_đã_làm <= 5`
+- IF `2 <= số_câu_đã_làm <= 5`
 - THEN ưu tiên sắp xếp ứng viên theo `a DESC` trước khi chọn câu kế tiếp.
-- Mục tiêu: hội tụ nhanh $\theta$ ở các bước đầu của CAT.
+- Mục tiêu: hội tụ nhanh $\theta$ ở pha thăm dò sớm, nhưng tránh kích hoạt ngay sau câu đầu tiên.
 
 ### R5. Luật chuyển topic để đảm bảo bao phủ ontology
 
@@ -182,9 +182,9 @@ Trong đó:
 
 ### R6. Luật lọc trình độ cao
 
-- IF `theta > 1.0`
+- IF `theta > 1.0` AND `số_câu_đã_làm >= 3` AND `SEM < 1.0`
 - THEN loại trừ các câu `Nhận biết` khỏi tập ứng viên.
-- Mục tiêu: tập trung đo lường ở mức `Thông hiểu/Vận dụng` khi người học đã vượt mức cơ bản.
+- Mục tiêu: chỉ nâng chuẩn khi vừa đủ dữ liệu và độ tin cậy ước lượng năng lực.
 
 ### R7. Luật kiểm soát đoán mò
 
@@ -194,9 +194,10 @@ Trong đó:
 
 ### R8. Luật ràng buộc lặp
 
-- IF `Question_ID` đã tồn tại trong lịch sử phiên (và cửa sổ câu gần nhất)
-- THEN loại khỏi danh sách chọn.
-- Mục tiêu: chống trùng lặp và cải thiện trải nghiệm làm bài.
+- Luôn loại các câu đã trả lời trong phiên hiện tại khỏi tập ứng viên.
+- IF tồn tại lịch sử câu gần nhất `cross-session` (cùng user, cùng môn)
+- THEN tiếp tục loại các câu đó khỏi tập ứng viên và ghi log `R8`.
+- Mục tiêu: chống trùng lặp thực sự giữa các phiên làm bài liên tiếp, tránh log nhiễu ở bước đầu tiên.
 
 ### R9. Luật kích hoạt sinh câu hỏi mới bằng LLM
 

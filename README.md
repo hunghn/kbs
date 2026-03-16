@@ -10,6 +10,7 @@ Mục tiêu của hệ thống:
 - Tổ chức tri thức theo cấu trúc ontology và quan hệ tiên quyết.
 - Đánh giá năng lực người học bằng tham số $\theta$ trong IRT 3PL.
 - Chọn câu hỏi kế tiếp theo cơ chế CAT kết hợp rule-based filtering và Fisher Information.
+- Ước lượng năng lực và độ bất định bằng Bayesian EAP (độ bất định expose qua trường `sem`, bản chất là posterior SD).
 - Sinh bổ sung câu hỏi bằng LLM khi question bank chưa đủ item phù hợp.
 - Trả kết quả chi tiết, tiến trình năng lực và gợi ý học lại kiến thức nền.
 
@@ -44,7 +45,7 @@ Mục tiêu của hệ thống:
 
 - FastAPI REST API
 - SQLAlchemy Async ORM
-- Engine IRT 3PL để ước lượng năng lực và tính Fisher Information
+- Engine IRT 3PL: dùng Fisher Information cho chọn câu hỏi và Bayesian EAP cho ước lượng năng lực/độ bất định
 - Rule engine điều phối CAT theo bộ luật R1-R12 và BLOOM
 - Pipeline sinh và thẩm định câu hỏi bằng LLM
 
@@ -85,7 +86,7 @@ Hệ thống biểu diễn tri thức theo Rela-model:
 
 - Frontend gửi đáp án và thời gian làm bài.
 - Backend ghi nhận `QuizResponse`.
-- Engine IRT cập nhật lại năng lực $\theta$ và độ bất định SEM.
+- Engine IRT cập nhật lại năng lực $\theta$ và độ bất định theo Bayesian EAP (posterior SD, hiện trả qua trường `sem`).
 - Rule engine xác định luật nào đang tác động đến bước hiện tại.
 - Hệ thống chọn câu kế tiếp hoặc kết thúc phiên nếu đạt điều kiện dừng.
 
@@ -112,7 +113,7 @@ Hệ thống biểu diễn tri thức theo Rela-model:
 
 Phiên CAT dừng khi thỏa một trong các điều kiện sau:
 
-- `SEM < 0.3`
+- `sem < 0.3` (giá trị `sem` hiện là posterior SD từ Bayesian EAP)
 - đạt số câu tối đa
 - không còn item phù hợp
 
@@ -130,7 +131,7 @@ Sau khi kết thúc, hệ thống trả về:
 ### Công thức xác suất trả lời đúng
 
 $$
-P(\theta) = c + \frac{1-c}{1 + e^{-a(\theta - b)}}
+P(\theta) = c + \frac{1-c}{1 + e^{-D\,a(\theta - b)}},\quad D = 1.702
 $$
 
 Trong đó:
@@ -139,6 +140,12 @@ Trong đó:
 - $a$: độ phân biệt của câu hỏi
 - $b$: độ khó của câu hỏi
 - $c$: xác suất đoán mò
+
+### Ước lượng năng lực và độ bất định
+
+- Hệ thống dùng Bayesian EAP để ước lượng $\theta$.
+- Độ bất định được lấy từ posterior SD và trả về qua trường API `sem` để tương thích ngược.
+- Fisher Information vẫn được dùng chủ yếu cho bài toán chọn item trong CAT, không phải nguồn chính để xuất độ bất định cuối cùng ở báo cáo.
 
 ### Nguyên tắc chọn câu hỏi trong CAT
 
@@ -182,7 +189,7 @@ Trong đó:
 
 ### R6. Luật lọc trình độ cao
 
-- IF `theta > 1.0` AND `số_câu_đã_làm >= 3` AND `SEM < 1.0`
+- IF `theta > 1.0` AND `số_câu_đã_làm >= 3` AND `sem < 1.0` (trong đó `sem` là posterior SD)
 - THEN loại trừ các câu `Nhận biết` khỏi tập ứng viên.
 - Mục tiêu: chỉ nâng chuẩn khi vừa đủ dữ liệu và độ tin cậy ước lượng năng lực.
 

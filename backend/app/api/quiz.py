@@ -24,7 +24,7 @@ from app.engine.question_selector import (
     select_next_adaptive,
 )
 from app.engine.scoring import score_quiz
-from app.engine.irt import estimate_theta, standard_error_of_measurement
+from app.engine.irt import estimate_ability_3pl, classify_mastery
 from app.engine.rules import topic_error_rates, classify_difficulty_level
 from app.engine.llm_generation import generate_question_from_topic, generate_validated_question_for_cat
 from app.config import get_settings
@@ -321,7 +321,8 @@ def _theta_history_from_scoring_data(scoring_data: list[dict]) -> list[float]:
                 "is_correct": bool(row["is_correct"]),
             }
         )
-        raw_theta = estimate_theta(rolling_data, initial_theta=current_theta)
+        ability_result = estimate_ability_3pl(rolling_data)
+        raw_theta = ability_result["theta_map"]
         if bool(row.get("guessing_flag")):
             # Keep timeline consistent with runtime theta damping under R7.
             current_theta = current_theta + 0.3 * (raw_theta - current_theta)
@@ -611,12 +612,22 @@ async def _rebuild_cat_step_from_session(
         min_value=-999.0,
         max_value=999.0,
     )
-    sem = _safe_numeric(
-        standard_error_of_measurement(theta, scoring_data),
-        default=999.0,
-        min_value=0.0,
-        max_value=999.0,
-    )
+    # Calculate ability estimate and uncertainty using unified Bayesian method
+    if scoring_data:
+        ability_result = estimate_ability_3pl(scoring_data)
+        sem = _safe_numeric(
+            ability_result["posterior_sd"],
+            default=999.0,
+            min_value=0.0,
+            max_value=999.0,
+        )
+    else:
+        sem = _safe_numeric(
+            999.0,
+            default=999.0,
+            min_value=0.0,
+            max_value=999.0,
+        )
 
     stop_reason = None
     is_completed = False
@@ -1469,14 +1480,16 @@ async def answer_cat_question(
             }
         )
 
-    raw_theta = estimate_theta(scoring_data, initial_theta=float(session.theta_estimate or 0.0))
+    # Estimate ability using unified Bayesian method
+    ability_result = estimate_ability_3pl(scoring_data) if scoring_data else {"theta_map": float(session.theta_estimate or 0.0), "posterior_sd": 999.0}
+    raw_theta = ability_result["theta_map"]
     # R6: If likely guessed, damp theta update to avoid over-inflation.
     if guessing_suspected:
         prev_theta = float(session.theta_estimate or 0.0)
         theta = prev_theta + 0.3 * (raw_theta - prev_theta)
     else:
         theta = raw_theta
-    sem = standard_error_of_measurement(theta, scoring_data)
+    sem = ability_result["posterior_sd"]
     theta = _safe_numeric(theta, default=0.0, min_value=-999.0, max_value=999.0)
     sem = _safe_numeric(sem, default=999.0, min_value=0.0, max_value=999.0)
     answered_count = len(responses)
@@ -2288,6 +2301,15 @@ async def get_quiz_results(
             time_spent_seconds=r.time_spent_seconds or 0,
         ))
 
+    # Calculate per-topic mastery using unified ability estimation
+    for tname in topic_scores.keys():
+        topic_responses = [sd for sd in scoring_data if sd["topic_name"] == tname]
+        if topic_responses:
+            topic_ability = estimate_ability_3pl(topic_responses)
+            topic_theta = topic_ability["theta_map"]
+            topic_scores[tname]["theta"] = round(topic_theta, 2)
+            topic_scores[tname]["mastery"] = classify_mastery(topic_theta)
+
     session_out = QuizSessionOut(
         id=session.id,
         subject_id=session.subject_id,
@@ -2306,13 +2328,24 @@ async def get_quiz_results(
         else 0.0
     )
     theta_for_eval = float(session.theta_estimate or 0.0)
-    sem_for_eval = _safe_numeric(
-        standard_error_of_measurement(theta_for_eval, scoring_data),
-        default=999.0,
-        min_value=0.0,
-        max_value=999.0,
-        ndigits=3,
-    )
+    # Calculate uncertainty using unified Bayesian method
+    if scoring_data:
+        ability_result = estimate_ability_3pl(scoring_data)
+        sem_for_eval = _safe_numeric(
+            ability_result["posterior_sd"],
+            default=999.0,
+            min_value=0.0,
+            max_value=999.0,
+            ndigits=3,
+        )
+    else:
+        sem_for_eval = _safe_numeric(
+            999.0,
+            default=999.0,
+            min_value=0.0,
+            max_value=999.0,
+            ndigits=3,
+        )
     bloom_classification = _classify_bloom(theta_for_eval, scoring_data)
 
     return QuizResultOut(

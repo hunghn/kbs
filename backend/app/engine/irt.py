@@ -189,6 +189,96 @@ def estimate_theta_eap(
     return numerator / denominator
 
 
+def estimate_ability_3pl(
+    responses: list[dict],
+    prior_mean: float = 0.0,
+    prior_sd: float = 1.0,
+    num_quadrature: int = 61,
+) -> dict:
+    """
+    Unified ability estimation using Bayesian EAP method.
+    Returns comprehensive ability profile including theta, uncertainty, and test information.
+
+    Args:
+        responses: List of dicts with keys: a, b, c, is_correct
+        prior_mean: Mean of normal prior (default 0.0 Standard Normal)
+        prior_sd: SD of normal prior (default 1.0 Standard Normal)
+        num_quadrature: Number of quadrature points for integration
+
+    Returns:
+        Dictionary with:
+        - theta_map: Point estimate (EAP)
+        - posterior_sd: Posterior standard deviation (measure of uncertainty)
+        - test_information: Total Fisher information at theta_map
+        - estimator_method: "eap_3pl" (for documentation)
+    """
+    if not responses:
+        return {
+            "theta_map": prior_mean,
+            "posterior_sd": prior_sd,
+            "test_information": 0.0,
+            "estimator_method": "eap_3pl",
+        }
+
+    # Quadrature points for numerical integration
+    points = [
+        -4.0 + i * 8.0 / (num_quadrature - 1) for i in range(num_quadrature)
+    ]
+
+    numerator = 0.0
+    denominator = 0.0
+    numerator_theta2 = 0.0
+
+    for theta_q in points:
+        # Prior: normal distribution
+        prior = math.exp(-0.5 * ((theta_q - prior_mean) / prior_sd) ** 2) / (
+            prior_sd * math.sqrt(2 * math.pi)
+        )
+
+        # Likelihood: product of item responses
+        log_likelihood = 0.0
+        for r in responses:
+            a, b, c = float(r["a"]), float(r["b"]), float(r["c"])
+            p = probability_3pl(theta_q, a, b, c)
+            if r["is_correct"]:
+                log_likelihood += math.log(max(p, 1e-10))
+            else:
+                log_likelihood += math.log(max(1.0 - p, 1e-10))
+
+        likelihood = math.exp(log_likelihood)
+        weight = likelihood * prior
+
+        numerator += theta_q * weight
+        numerator_theta2 += (theta_q ** 2) * weight
+        denominator += weight
+
+    if denominator == 0:
+        return {
+            "theta_map": prior_mean,
+            "posterior_sd": prior_sd,
+            "test_information": 0.0,
+            "estimator_method": "eap_3pl",
+        }
+
+    # Point estimate (EAP)
+    theta_map = numerator / denominator
+
+    # Posterior variance: E[θ²] - (E[θ])²
+    posterior_variance = (numerator_theta2 / denominator) - (theta_map ** 2)
+    posterior_variance = max(posterior_variance, 0.0)
+    posterior_sd = math.sqrt(posterior_variance)
+
+    # Test information at theta_map
+    test_info = total_test_information(theta_map, responses)
+
+    return {
+        "theta_map": theta_map,
+        "posterior_sd": posterior_sd,
+        "test_information": test_info,
+        "estimator_method": "eap_3pl",
+    }
+
+
 def classify_mastery(theta: float) -> str:
     """Classify mastery level based on theta."""
     if theta >= 1.5:

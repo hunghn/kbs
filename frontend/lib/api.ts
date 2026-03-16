@@ -409,6 +409,10 @@ export interface QuizResultInfo {
     string,
     { correct: number; total: number; mastery: string }
   >;
+  accuracy: number;
+  sem?: number;
+  answered_count: number;
+  bloom_classification?: string;
 }
 
 export interface TopicProgress {

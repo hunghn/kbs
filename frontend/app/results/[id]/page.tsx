@@ -53,12 +53,66 @@ export default function ResultsPage() {
   const accuracy = session.total_questions > 0
     ? Math.round((session.correct_answers / session.total_questions) * 100)
     : 0;
+  const normalizedAccuracy = result.accuracy > 0 ? result.accuracy : (accuracy / 100);
+  const sem = typeof result.sem === "number" ? result.sem : 999;
+  const answeredCount = result.answered_count ?? results.length;
+  const theta = typeof session.theta_estimate === "number" ? session.theta_estimate : null;
+  const hasApplicationQuestions = results.some((r) => {
+    const qType = (r.question.question_type || "").toLowerCase();
+    return qType.includes("vận") || qType.includes("van");
+  });
+
+  const overallEvaluationLabel = (() => {
+    if (theta == null) {
+      return "N/A";
+    }
+
+    const bloomGate = !hasApplicationQuestions || Boolean(result.bloom_classification);
+
+    if (
+      theta >= 1.5
+      && normalizedAccuracy >= 0.75
+      && sem <= 0.6
+      && answeredCount >= 15
+      && bloomGate
+    ) {
+      return "Xuất sắc";
+    }
+
+    if (
+      theta >= 1.1
+      && normalizedAccuracy >= 0.7
+      && sem <= 0.75
+      && answeredCount >= 12
+    ) {
+      return "Giỏi";
+    }
+
+    if (
+      theta >= 0.6
+      && normalizedAccuracy >= 0.6
+      && sem <= 0.9
+      && answeredCount >= 10
+    ) {
+      return "Khá";
+    }
+
+    if (
+      theta >= -0.2
+      && normalizedAccuracy >= 0.45
+      && answeredCount >= 8
+    ) {
+      return "Trung bình";
+    }
+
+    return "Cần cải thiện";
+  })();
 
   const masteryLabel: Record<string, string> = {
     master: "Xuất sắc",
-    proficient: "Thành thạo",
-    developing: "Đang phát triển",
-    beginner: "Mới bắt đầu",
+    proficient: "Giỏi",
+    developing: "Khá",
+    beginner: "Trung bình",
     novice: "Cần cải thiện",
   };
 
@@ -133,15 +187,7 @@ export default function ResultsPage() {
             </CardHeader>
             <CardContent>
               <div className="text-lg font-bold">
-                {session.theta_estimate != null
-                  ? masteryLabel[
-                      session.theta_estimate >= 1.5 ? "master"
-                      : session.theta_estimate >= 0.5 ? "proficient"
-                      : session.theta_estimate >= -0.5 ? "developing"
-                      : session.theta_estimate >= -1.5 ? "beginner"
-                      : "novice"
-                    ] ?? "N/A"
-                  : "N/A"}
+                {overallEvaluationLabel}
               </div>
             </CardContent>
           </Card>

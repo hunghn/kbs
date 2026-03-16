@@ -212,3 +212,7 @@ class QuizResultOut(BaseModel):
     session: QuizSessionOut
     results: list[QuizResultDetail] = []
     topic_scores: dict[str, dict] = {}  # topic_name -> {correct, total, mastery}
+    accuracy: float = 0.0
+    sem: Optional[float] = None
+    answered_count: int = 0
+    bloom_classification: Optional[str] = None

@@ -2233,6 +2233,8 @@ async def get_quiz_results(
 
     results = []
     topic_scores = {}
+    scoring_data: list[dict] = []
+    answered_count = 0
 
     for r in responses:
         q = r.question
@@ -2243,6 +2245,24 @@ async def get_quiz_results(
         topic_scores[tname]["total"] += 1
         if r.is_correct:
             topic_scores[tname]["correct"] += 1
+        if r.user_answer is not None:
+            answered_count += 1
+
+        scoring_data.append({
+            "a": float(q.discrimination_a),
+            "b": float(q.difficulty_b),
+            "c": float(q.guessing_c),
+            "is_correct": bool(r.is_correct),
+            "question_type": q.question_type,
+            "topic_id": q.topic_id,
+            "topic_name": tname,
+            "major_topic_name": q.topic.major_topic.name if q.topic and q.topic.major_topic else "",
+            "is_sql": _is_sql_context(
+                q.topic.name if q.topic else "",
+                q.topic.major_topic.name if q.topic and q.topic.major_topic else "",
+            ),
+            "guessing_flag": bool(r.guessing_flag),
+        })
 
         results.append(QuizResultDetail(
             question=QuestionWithAnswer(
@@ -2280,10 +2300,29 @@ async def get_quiz_results(
         completed_at=session.completed_at.isoformat() if session.completed_at else None,
     )
 
+    accuracy = (
+        float(session.correct_answers or 0) / float(session.total_questions or 1)
+        if (session.total_questions or 0) > 0
+        else 0.0
+    )
+    theta_for_eval = float(session.theta_estimate or 0.0)
+    sem_for_eval = _safe_numeric(
+        standard_error_of_measurement(theta_for_eval, scoring_data),
+        default=999.0,
+        min_value=0.0,
+        max_value=999.0,
+        ndigits=3,
+    )
+    bloom_classification = _classify_bloom(theta_for_eval, scoring_data)
+
     return QuizResultOut(
         session=session_out,
         results=results,
         topic_scores=topic_scores,
+        accuracy=round(float(accuracy), 4),
+        sem=sem_for_eval,
+        answered_count=answered_count,
+        bloom_classification=bloom_classification,
     )
 
 

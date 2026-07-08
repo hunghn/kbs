@@ -13,16 +13,20 @@ interface QuizSetupProps {
   defaultSubjectId?: number;
   onStart: (config: {
     subject_id: number;
-    num_questions: number;
+    questions_per_exam: number;
+    max_exams: number;
     recognition_pct: number;
     comprehension_pct: number;
     application_pct: number;
+    strategy: "rules" | "rl";
   }) => void;
 }
 
 export function QuizSetup({ subjects, defaultSubjectId, onStart }: QuizSetupProps) {
   const [subjectId, setSubjectId] = useState<number>(0);
-  const [numQuestions, setNumQuestions] = useState(20);
+  const [numQuestions, setNumQuestions] = useState(10);
+  const [maxExams, setMaxExams] = useState(5);
+  const [strategy, setStrategy] = useState<"rules" | "rl">("rules");
   const [recognition, setRecognition] = useState(30);
   const [comprehension, setComprehension] = useState(50);
   const [application, setApplication] = useState(20);
@@ -52,10 +56,12 @@ export function QuizSetup({ subjects, defaultSubjectId, onStart }: QuizSetupProp
     try {
       await onStart({
         subject_id: subjectId,
-        num_questions: numQuestions,
+        questions_per_exam: numQuestions,
+        max_exams: maxExams,
         recognition_pct: recognition / 100,
         comprehension_pct: comprehension / 100,
         application_pct: application / 100,
+        strategy,
       });
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Có lỗi xảy ra");
@@ -104,16 +110,59 @@ export function QuizSetup({ subjects, defaultSubjectId, onStart }: QuizSetupProp
             )}
           </div>
 
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-2">
+              <Label htmlFor="numQuestions">Số câu mỗi đề</Label>
+              <Input
+                id="numQuestions"
+                type="number"
+                min={5}
+                max={50}
+                value={numQuestions}
+                onChange={(e) => setNumQuestions(parseInt(e.target.value) || 10)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="maxExams">Số đề tối đa</Label>
+              <Input
+                id="maxExams"
+                type="number"
+                min={1}
+                max={10}
+                value={maxExams}
+                onChange={(e) => setMaxExams(parseInt(e.target.value) || 5)}
+              />
+              <p className="text-xs text-muted-foreground">
+                Hệ thống dừng sớm khi ước lượng năng lực đủ tin cậy (SEM &lt; 0.3)
+              </p>
+            </div>
+          </div>
+
           <div className="space-y-2">
-            <Label htmlFor="numQuestions">Số câu hỏi</Label>
-            <Input
-              id="numQuestions"
-              type="number"
-              min={5}
-              max={50}
-              value={numQuestions}
-              onChange={(e) => setNumQuestions(parseInt(e.target.value) || 20)}
-            />
+            <Label>Chiến lược điều hướng độ khó giữa các đề</Label>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant={strategy === "rules" ? "default" : "outline"}
+                size="sm"
+                onClick={() => setStrategy("rules")}
+              >
+                Luật R2/R3 (mặc định)
+              </Button>
+              <Button
+                type="button"
+                variant={strategy === "rl" ? "default" : "outline"}
+                size="sm"
+                onClick={() => setStrategy("rl")}
+              >
+                Reinforcement Learning
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {strategy === "rules"
+                ? "Đề sau khó hơn/dễ hơn theo luật cố định (θ + 0.5 nếu làm tốt, θ − 0.7 nếu làm kém)."
+                : "Tác tử bandit tự học offset độ khó tối ưu theo ngữ cảnh, reward là mức giảm SEM sau mỗi đề."}
+            </p>
           </div>
 
           <div className="space-y-3">

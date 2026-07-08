@@ -60,6 +60,9 @@ export const knowledgeAPI = {
 
   getTopics: (subjectId?: number) =>
     fetchAPI<TopicInfo[]>(`/knowledge/topics${subjectId ? `?subject_id=${subjectId}` : ""}`),
+
+  getAbilityGraph: (subjectId: number) =>
+    fetchAPI<AbilityGraphInfo>(`/knowledge/subjects/${subjectId}/ability-graph`),
 };
 
 // Quiz
@@ -82,20 +85,11 @@ export const quizAPI = {
   getResults: (sessionId: number) =>
     fetchAPI<QuizResultInfo>(`/quiz/${sessionId}/results`),
 
-  startCAT: (config: QuizConfig) =>
-    fetchAPI<CATStepInfo>("/quiz/start-cat", {
-      method: "POST",
-      body: JSON.stringify(config),
-    }),
-
-  answerCAT: (sessionId: number, payload: CATAnswerSubmit) =>
-    fetchAPI<CATStepInfo>(`/quiz/${sessionId}/answer`, {
-      method: "POST",
-      body: JSON.stringify(payload),
-    }),
-
   getRuleLogs: (sessionId: number) =>
     fetchAPI<InferenceRuleLogInfo[]>(`/quiz/${sessionId}/rule-logs`),
+
+  getExplanation: (sessionId: number) =>
+    fetchAPI<ExplanationInfo>(`/quiz/${sessionId}/explanation`),
 
   generateQuestion: (payload: {
     topic_id: number;
@@ -108,9 +102,63 @@ export const quizAPI = {
     }),
 };
 
+// Exam-batch adaptive testing (multi-stage)
+export const adaptiveAPI = {
+  start: (config: AdaptiveStartConfig) =>
+    fetchAPI<AdaptiveExamInfo>("/quiz/adaptive/start", {
+      method: "POST",
+      body: JSON.stringify(config),
+    }),
+
+  submit: (chainId: number, payload: { session_id: number; answers: AnswerSubmit[] }) =>
+    fetchAPI<ExamEvaluationInfo>(`/quiz/adaptive/${chainId}/submit`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  next: (chainId: number) =>
+    fetchAPI<ChainStateInfo>(`/quiz/adaptive/${chainId}/next`, {
+      method: "POST",
+    }),
+
+  finish: (chainId: number) =>
+    fetchAPI<ChainSummaryInfo>(`/quiz/adaptive/${chainId}/finish`, {
+      method: "POST",
+    }),
+
+  getState: (chainId: number) =>
+    fetchAPI<ChainStateInfo>(`/quiz/adaptive/${chainId}`),
+
+  getSummary: (chainId: number) =>
+    fetchAPI<ChainSummaryInfo>(`/quiz/adaptive/${chainId}/summary`),
+};
+
+// System evaluation (convergence simulation)
+export const evaluationAPI = {
+  convergence: (params: {
+    subject_id: number;
+    n_students?: number;
+    questions_per_exam?: number;
+    max_exams?: number;
+    seed?: number;
+    include_rl?: boolean;
+  }) => {
+    const query = new URLSearchParams({ subject_id: String(params.subject_id) });
+    if (params.n_students) query.set("n_students", String(params.n_students));
+    if (params.questions_per_exam) query.set("questions_per_exam", String(params.questions_per_exam));
+    if (params.max_exams) query.set("max_exams", String(params.max_exams));
+    if (params.seed) query.set("seed", String(params.seed));
+    if (params.include_rl) query.set("include_rl", "true");
+    return fetchAPI<ConvergenceReportInfo>(`/quiz/evaluation/convergence?${query.toString()}`);
+  },
+};
+
 // Users
 export const userAPI = {
   getDashboard: () => fetchAPI<DashboardInfo>("/users/dashboard"),
+
+  getAbilityPrediction: (subjectId: number) =>
+    fetchAPI<DKTPredictionInfo>(`/users/ability-prediction?subject_id=${subjectId}`),
 };
 
 // Admin
@@ -207,6 +255,34 @@ export interface SubjectTree {
   }[];
 }
 
+export interface AbilityGraphNode {
+  id: number;
+  code?: string;
+  name: string;
+  major_topic_id: number;
+  major_topic_name: string;
+  major_topic_order: number;
+  order_index: number;
+  question_count: number;
+  theta?: number | null;
+  mastery?: string | null;
+  attempted: number;
+  correct: number;
+}
+
+export interface AbilityGraphEdge {
+  from: number;
+  to: number;
+  type: "prerequisite" | "inference";
+}
+
+export interface AbilityGraphInfo {
+  subject_id: number;
+  subject_name: string;
+  nodes: AbilityGraphNode[];
+  edges: AbilityGraphEdge[];
+}
+
 export interface QuizConfig {
   subject_id: number;
   num_questions: number;
@@ -243,12 +319,6 @@ export interface AnswerSubmit {
   time_spent_seconds: number;
 }
 
-export interface CATAnswerSubmit {
-  question_id: number;
-  user_answer: string;
-  time_spent_seconds: number;
-}
-
 export interface LearningRecommendation {
   topic_id: number;
   topic_name: string;
@@ -257,19 +327,157 @@ export interface LearningRecommendation {
   reason: string;
 }
 
-export interface CATStepInfo {
+export interface AdaptiveStartConfig {
+  subject_id: number;
+  questions_per_exam: number;
+  max_exams: number;
+  recognition_pct: number;
+  comprehension_pct: number;
+  application_pct: number;
+  strategy?: "rules" | "rl";
+}
+
+export interface AdaptiveExamInfo {
+  chain_id: number;
   session_id: number;
-  question?: QuestionInfo;
+  exam_index: number;
+  max_exams: number;
+  questions_per_exam: number;
+  questions: QuestionInfo[];
   theta: number;
   sem: number;
-  answered_count: number;
-  max_questions: number;
-  is_completed: boolean;
-  stop_reason?: string;
-  bloom_classification?: string;
   applied_rules: string[];
+  strategy?: string;
+}
+
+export interface ExamEvaluationInfo {
+  chain_id: number;
+  session_id: number;
+  exam_index: number;
+  max_exams: number;
+  score: number;
+  total: number;
+  accuracy: number;
+  theta: number;
+  sem: number;
   theta_history: number[];
+  applied_rules: string[];
+  topic_scores: Record<string, { correct: number; total: number; accuracy: number; theta: number; mastery: string }>;
+  bloom_classification?: string;
   recommendations: LearningRecommendation[];
+  chain_completed: boolean;
+  stop_reason?: string;
+}
+
+export interface ChainExamRowInfo {
+  session_id: number;
+  exam_index: number;
+  score: number;
+  total: number;
+  accuracy: number;
+  theta_after?: number;
+  completed: boolean;
+}
+
+export interface ChainSummaryInfo {
+  chain_id: number;
+  subject_id: number;
+  subject_name: string;
+  status: string;
+  stop_reason?: string;
+  theta: number;
+  sem: number;
+  total_questions: number;
+  total_correct: number;
+  theta_history: number[];
+  exams: ChainExamRowInfo[];
+  topic_scores: Record<string, { correct: number; total: number; accuracy: number; theta: number; mastery: string }>;
+  bloom_classification?: string;
+  recommendations: LearningRecommendation[];
+}
+
+export interface DKTPredictionInfo {
+  subject_id: number;
+  history_length: number;
+  predictions: {
+    topic_id: number;
+    code?: string | null;
+    topic_name: string;
+    major_topic_name: string;
+    p_correct_next: number;
+    attempted: number;
+    correct: number;
+  }[];
+}
+
+export interface ExplanationQuestionInfo {
+  question_id: number;
+  external_id: string;
+  order: number;
+  topic_name: string;
+  question_type: string;
+  difficulty_b: number;
+  difficulty_level: string;
+  is_correct: boolean;
+  guessing_flag: boolean;
+  delta_theta: number;
+  fisher_information: number;
+  information_share: number;
+}
+
+export interface ExplanationInfo {
+  session_id: number;
+  theta: number;
+  sem: number;
+  mastery: string;
+  theta_history: number[];
+  sem_history: number[];
+  questions: ExplanationQuestionInfo[];
+  bloom_stats: Record<string, { total: number; correct: number; accuracy: number }>;
+  difficulty_stats: Record<string, { total: number; correct: number; accuracy: number }>;
+  narrative: string[];
+}
+
+export interface ConvergenceStrategyInfo {
+  strategy: string;
+  n_students: number;
+  bias: number;
+  rmse: number;
+  mae: number;
+  correlation: number;
+  convergence_rate: number;
+  mean_items_used: number;
+  mean_items_to_converge?: number | null;
+  mean_sem_by_exam: number[];
+  students: {
+    true_theta: number;
+    theta_hat: number;
+    error: number;
+    items_used: number;
+    converged: boolean;
+    final_sem: number;
+  }[];
+}
+
+export interface ConvergenceReportInfo {
+  subject_id: number;
+  n_students: number;
+  questions_per_exam: number;
+  max_exams: number;
+  sem_stop: number;
+  pool_size: number;
+  strategies: ConvergenceStrategyInfo[];
+}
+
+export interface ChainStateInfo {
+  chain_id: number;
+  status: string;
+  stop_reason?: string;
+  exam_index: number;
+  max_exams: number;
+  theta: number;
+  sem: number;
+  active_exam?: AdaptiveExamInfo;
 }
 
 export interface InferenceRuleLogInfo {
@@ -393,6 +601,8 @@ export interface QuizResultInfo {
     theta_estimate?: number;
     started_at?: string;
     completed_at?: string;
+    chain_id?: number;
+    exam_index?: number;
   };
   results: {
     question: QuestionInfo & {

@@ -110,12 +110,6 @@ class QuizConfig(BaseModel):
     topic_ids: Optional[list[int]] = None  # Filter by specific topics
 
 
-class CATAnswerSubmit(BaseModel):
-    question_id: int
-    user_answer: str
-    time_spent_seconds: int = 0
-
-
 class LearningRecommendation(BaseModel):
     topic_id: int
     topic_name: str
@@ -136,21 +130,6 @@ class InferenceRuleLogOut(BaseModel):
     reason: str
     answered_at: Optional[str] = None
     created_at: Optional[str] = None
-
-
-class CATStepOut(BaseModel):
-    session_id: int
-    question: Optional[QuestionOut] = None
-    theta: float
-    sem: float
-    answered_count: int
-    max_questions: int
-    is_completed: bool
-    stop_reason: Optional[str] = None
-    bloom_classification: Optional[str] = None
-    applied_rules: list[str] = []
-    theta_history: list[float] = []
-    recommendations: list[LearningRecommendation] = []
 
 
 class LLMGenerateRequest(BaseModel):
@@ -196,9 +175,100 @@ class QuizSessionOut(BaseModel):
     theta_estimate: Optional[float] = None
     started_at: Optional[str] = None
     completed_at: Optional[str] = None
+    chain_id: Optional[int] = None
+    exam_index: Optional[int] = None
 
     class Config:
         from_attributes = True
+
+
+# ---------- Exam-batch adaptive testing (multi-stage) ----------
+
+class AdaptiveStartConfig(BaseModel):
+    subject_id: int
+    questions_per_exam: int = 20
+    max_exams: int = 5
+    # Distribution: Nhận biết, Thông hiểu, Vận dụng (used by exam #1 blueprint)
+    recognition_pct: float = 0.3
+    comprehension_pct: float = 0.5
+    application_pct: float = 0.2
+    # "rules": R2/R3 steer difficulty; "rl": contextual bandit learns the offset
+    strategy: str = "rules"
+
+
+class AdaptiveExamOut(BaseModel):
+    chain_id: int
+    session_id: int
+    exam_index: int
+    max_exams: int
+    questions_per_exam: int
+    questions: list[QuestionOut] = []
+    theta: float = 0.0
+    sem: float = 999.0
+    applied_rules: list[str] = []  # generation-time rules for this exam
+    strategy: str = "rules"
+
+
+class AdaptiveSubmitIn(BaseModel):
+    session_id: int
+    answers: list[AnswerSubmit] = []
+
+
+class ExamEvaluationOut(BaseModel):
+    chain_id: int
+    session_id: int
+    exam_index: int
+    max_exams: int
+    score: int
+    total: int
+    accuracy: float
+    theta: float  # cumulative over the whole chain
+    sem: float
+    theta_history: list[float] = []
+    applied_rules: list[str] = []  # grading-time rules (R7, BLOOM)
+    topic_scores: dict[str, dict] = {}
+    bloom_classification: Optional[str] = None
+    recommendations: list[LearningRecommendation] = []
+    chain_completed: bool = False
+    stop_reason: Optional[str] = None
+
+
+class ChainExamRow(BaseModel):
+    session_id: int
+    exam_index: int
+    score: int = 0
+    total: int = 0
+    accuracy: float = 0.0
+    theta_after: Optional[float] = None
+    completed: bool = False
+
+
+class ChainSummaryOut(BaseModel):
+    chain_id: int
+    subject_id: int
+    subject_name: str = ""
+    status: str
+    stop_reason: Optional[str] = None
+    theta: float = 0.0
+    sem: float = 999.0
+    total_questions: int = 0
+    total_correct: int = 0
+    theta_history: list[float] = []
+    exams: list[ChainExamRow] = []
+    topic_scores: dict[str, dict] = {}
+    bloom_classification: Optional[str] = None
+    recommendations: list[LearningRecommendation] = []
+
+
+class ChainStateOut(BaseModel):
+    chain_id: int
+    status: str
+    stop_reason: Optional[str] = None
+    exam_index: int = 0
+    max_exams: int = 5
+    theta: float = 0.0
+    sem: float = 999.0
+    active_exam: Optional[AdaptiveExamOut] = None  # unsubmitted exam, if any
 
 
 class QuizResultDetail(BaseModel):

@@ -20,6 +20,12 @@ class Settings(BaseSettings):
     # Set to 0 to disable cross-session repeat avoidance.
     CAT_RECENT_QUESTION_WINDOW: int = 120
 
+    # Exam-batch adaptive testing (multi-stage) settings
+    ADAPTIVE_MAX_EXAMS_DEFAULT: int = 5
+    ADAPTIVE_SEM_STOP: float = 0.3
+    # R9 trigger: generate LLM item when no bank item is within this |b - b_target| gap
+    ADAPTIVE_MIN_B_GAP_LLM: float = 0.45
+
 @lru_cache()
 def get_settings():
     return Settings()

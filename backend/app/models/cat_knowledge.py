@@ -30,6 +30,24 @@ class KnowledgeGraph(Base):
     )
 
 
+class RLPolicy(Base):
+    """Q-values of the exam-difficulty steering bandit, per subject."""
+
+    __tablename__ = "rl_policy"
+
+    id = Column(Integer, primary_key=True, index=True)
+    subject_id = Column(Integer, ForeignKey("subjects.id"), nullable=False)
+    state_key = Column(String(40), nullable=False)
+    action_index = Column(Integer, nullable=False)
+    q_value = Column(Numeric(8, 4), nullable=False, default=0)
+    visits = Column(Integer, nullable=False, default=0)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("subject_id", "state_key", "action_index", name="uq_rl_policy_entry"),
+    )
+
+
 class UserAbility(Base):
     """User theta tracking at subject level."""
 

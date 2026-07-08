@@ -17,12 +17,42 @@ class User(Base):
     topic_progress = relationship("UserTopicProgress", back_populates="user", cascade="all, delete-orphan")
 
 
+class ExamChain(Base):
+    """Chuỗi đề thi thích ứng: mỗi lần thi gồm nhiều đề (QuizSession) nối tiếp."""
+    __tablename__ = "exam_chains"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    subject_id = Column(Integer, ForeignKey("subjects.id"), nullable=False)
+    questions_per_exam = Column(Integer, nullable=False, default=20)
+    max_exams = Column(Integer, nullable=False, default=5)
+    recognition_pct = Column(Numeric(4, 3), nullable=False, default=0.3)
+    comprehension_pct = Column(Numeric(4, 3), nullable=False, default=0.5)
+    application_pct = Column(Numeric(4, 3), nullable=False, default=0.2)
+    status = Column(String(20), nullable=False, default="active")  # active | completed
+    stop_reason = Column(String(100))
+    strategy = Column(String(10), nullable=False, default="rules")  # rules | rl
+    rl_state = Column(String(40))   # pending bandit decision awaiting reward
+    rl_action = Column(Integer)
+    current_theta = Column(Numeric(6, 3), default=0)
+    current_sem = Column(Numeric(6, 3), default=999)
+    exams_generated = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    completed_at = Column(DateTime(timezone=True))
+
+    user = relationship("User")
+    subject = relationship("Subject")
+    sessions = relationship("QuizSession", back_populates="chain")
+
+
 class QuizSession(Base):
     __tablename__ = "quiz_sessions"
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     subject_id = Column(Integer, ForeignKey("subjects.id"), nullable=False)
+    chain_id = Column(Integer, ForeignKey("exam_chains.id"), nullable=True)
+    exam_index = Column(Integer, nullable=True)  # 1-based within the chain
     started_at = Column(DateTime(timezone=True), server_default=func.now())
     completed_at = Column(DateTime(timezone=True))
     total_score = Column(Numeric(5, 2))
@@ -32,6 +62,7 @@ class QuizSession(Base):
 
     user = relationship("User", back_populates="quiz_sessions")
     subject = relationship("Subject")
+    chain = relationship("ExamChain", back_populates="sessions")
     responses = relationship("QuizResponse", back_populates="session", cascade="all, delete-orphan")
 
 

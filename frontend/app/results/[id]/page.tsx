@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { authAPI, quizAPI, type QuizResultInfo, type InferenceRuleLogInfo } from "@/lib/api";
+import { authAPI, quizAPI, type QuizResultInfo, type InferenceRuleLogInfo, type ExplanationInfo } from "@/lib/api";
 import { Navbar } from "@/components/layout/navbar";
 import { MathContent } from "@/components/common/math-content";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -21,6 +21,7 @@ export default function ResultsPage() {
   const [user, setUser] = useState<{ id: number; username: string } | null>(null);
   const [result, setResult] = useState<QuizResultInfo | null>(null);
   const [ruleLogs, setRuleLogs] = useState<InferenceRuleLogInfo[]>([]);
+  const [explanation, setExplanation] = useState<ExplanationInfo | null>(null);
   const [loading, setLoading] = useState(true);
 
   const loadData = useCallback(async () => {
@@ -31,6 +32,11 @@ export default function ResultsPage() {
       setResult(res);
       const logs = await quizAPI.getRuleLogs(Number(id));
       setRuleLogs(logs);
+      try {
+        setExplanation(await quizAPI.getExplanation(Number(id)));
+      } catch {
+        setExplanation(null);
+      }
     } catch {
       router.push("/");
     }
@@ -133,10 +139,18 @@ export default function ResultsPage() {
           <div>
             <h1 className="text-3xl font-bold tracking-tight">Kết quả Bài thi</h1>
             <p className="text-muted-foreground mt-1">
-              {session.subject_name} · Bài thi #{session.id}
+              {session.subject_name} · {session.exam_index ? `Đề ${session.exam_index}` : `Bài thi #${session.id}`}
+              {session.chain_id ? ` · Chuỗi đề #${session.chain_id}` : ""}
             </p>
           </div>
           <div className="flex gap-2">
+            {session.chain_id && (
+              <Link href={`/results/chain/${session.chain_id}`}>
+                <Button variant="outline">
+                  <ArrowLeft className="h-4 w-4 mr-1" /> Tổng kết chuỗi đề
+                </Button>
+              </Link>
+            )}
             <Link href="/quiz">
               <Button variant="outline">
                 Làm bài mới
@@ -226,6 +240,99 @@ export default function ResultsPage() {
             </div>
           </CardContent>
         </Card>
+
+        {/* Explainable AI */}
+        {explanation && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Giải thích đánh giá (Explainable AI)</CardTitle>
+              <CardDescription>
+                Phân rã cách hệ thống ước lượng năng lực θ từ từng câu trả lời
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              {/* Narrative */}
+              <ul className="space-y-2 text-sm">
+                {explanation.narrative.map((line, i) => (
+                  <li key={i} className="flex gap-2">
+                    <span className="text-primary mt-0.5">▸</span>
+                    <span>{line}</span>
+                  </li>
+                ))}
+              </ul>
+
+              {/* Per-question delta theta bars */}
+              <div>
+                <p className="text-sm font-medium mb-2">Ảnh hưởng của từng câu lên θ (Δθ)</p>
+                <div className="space-y-1.5">
+                  {explanation.questions.map((q) => {
+                    const maxAbs = Math.max(
+                      ...explanation.questions.map((x) => Math.abs(x.delta_theta)),
+                      0.001
+                    );
+                    const pct = Math.min(Math.abs(q.delta_theta) / maxAbs, 1) * 50;
+                    return (
+                      <div key={q.question_id} className="flex items-center gap-2 text-xs">
+                        <span className="w-14 shrink-0 text-muted-foreground">Câu {q.order}</span>
+                        <span className="w-16 shrink-0 font-mono">{q.external_id}</span>
+                        <div className="relative h-4 flex-1 rounded bg-muted overflow-hidden">
+                          <div className="absolute left-1/2 top-0 bottom-0 w-px bg-border" />
+                          <div
+                            className={q.delta_theta >= 0 ? "absolute top-0 bottom-0 bg-green-500/80" : "absolute top-0 bottom-0 bg-red-500/80"}
+                            style={
+                              q.delta_theta >= 0
+                                ? { left: "50%", width: `${pct}%` }
+                                : { right: "50%", width: `${pct}%` }
+                            }
+                          />
+                        </div>
+                        <span className={`w-16 shrink-0 text-right font-mono ${q.delta_theta >= 0 ? "text-green-700" : "text-red-700"}`}>
+                          {q.delta_theta >= 0 ? "+" : ""}{q.delta_theta.toFixed(3)}
+                        </span>
+                        <span className="w-20 shrink-0 text-right text-muted-foreground">
+                          FI {Math.round(q.information_share * 100)}%
+                          {q.guessing_flag ? " ⚠R7" : ""}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Bloom + difficulty tables */}
+              <div className="grid gap-4 md:grid-cols-2">
+                <div>
+                  <p className="text-sm font-medium mb-2">Kỹ năng đo được (thang Bloom)</p>
+                  <div className="space-y-1.5">
+                    {Object.entries(explanation.bloom_stats).map(([label, s]) => (
+                      <div key={label} className="flex items-center gap-2 text-xs">
+                        <span className="w-24 shrink-0">{label}</span>
+                        <Progress value={s.accuracy * 100} className="h-2 flex-1" />
+                        <span className="w-16 shrink-0 text-right text-muted-foreground">
+                          {s.correct}/{s.total} đúng
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <p className="text-sm font-medium mb-2">Theo mức độ khó (tham số b)</p>
+                  <div className="space-y-1.5">
+                    {Object.entries(explanation.difficulty_stats).map(([label, s]) => (
+                      <div key={label} className="flex items-center gap-2 text-xs">
+                        <span className="w-24 shrink-0">{label}</span>
+                        <Progress value={s.accuracy * 100} className="h-2 flex-1" />
+                        <span className="w-16 shrink-0 text-right text-muted-foreground">
+                          {s.correct}/{s.total} đúng
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         <Card>
           <CardHeader>

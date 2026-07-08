@@ -9,6 +9,7 @@ from app.api.quiz import router as quiz_router
 from app.api.users import router as auth_router, user_router
 from app.api.questions import router as questions_router
 from app.api.admin import router as admin_router
+from app.api.adaptive import router as adaptive_router
 
 
 @asynccontextmanager
@@ -46,6 +47,36 @@ async def lifespan(app: FastAPI):
                 "ADD COLUMN IF NOT EXISTS llm_system_prompt TEXT NOT NULL DEFAULT ''"
             )
         )
+        await conn.execute(
+            text(
+                "ALTER TABLE IF EXISTS quiz_sessions "
+                "ADD COLUMN IF NOT EXISTS chain_id INTEGER REFERENCES exam_chains(id)"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE IF EXISTS quiz_sessions "
+                "ADD COLUMN IF NOT EXISTS exam_index INTEGER"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE IF EXISTS exam_chains "
+                "ADD COLUMN IF NOT EXISTS strategy VARCHAR(10) NOT NULL DEFAULT 'rules'"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE IF EXISTS exam_chains "
+                "ADD COLUMN IF NOT EXISTS rl_state VARCHAR(40)"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE IF EXISTS exam_chains "
+                "ADD COLUMN IF NOT EXISTS rl_action INTEGER"
+            )
+        )
     yield
     await engine.dispose()
 
@@ -72,6 +103,7 @@ app.include_router(knowledge_router)
 app.include_router(quiz_router)
 app.include_router(questions_router)
 app.include_router(admin_router)
+app.include_router(adaptive_router)
 
 
 @app.get("/api/health")

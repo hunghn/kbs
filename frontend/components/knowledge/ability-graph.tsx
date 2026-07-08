@@ -244,6 +244,25 @@ export function AbilityGraph() {
                 <span>Đã làm: <b className="text-foreground">{selected.correct}/{selected.attempted}</b></span>
                 <span>Ngân hàng: <b className="text-foreground">{selected.question_count} câu</b></span>
               </div>
+              {selected.skills && selected.skills.length > 0 && (
+                <div className="mt-2 border-t pt-2">
+                  <p className="text-xs text-muted-foreground mb-1">Kỹ năng đo được của chủ đề này:</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {selected.skills.map((s) => (
+                      <span
+                        key={s.id}
+                        className={
+                          s.kind === "application"
+                            ? "rounded-full bg-purple-100 px-2 py-0.5 text-xs text-purple-800"
+                            : "rounded-full bg-sky-100 px-2 py-0.5 text-xs text-sky-800"
+                        }
+                      >
+                        {s.name}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </CardContent>

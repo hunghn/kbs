@@ -677,6 +677,44 @@ async def get_session_explanation(
     for label, agg in bloom_stats.items():
         agg["accuracy"] = round(agg["correct"] / agg["total"], 4) if agg["total"] else 0.0
 
+    # Skill layer: comprehension skills are measured by Nhận biết/Thông hiểu
+    # questions of the topic, application skills by Vận dụng questions.
+    from app.models.knowledge import Skill
+
+    session_topic_ids = {row["topic_id"] for row in scoring_data if row.get("topic_id")}
+    skill_rows = await db.execute(
+        select(Skill).where(Skill.topic_id.in_(session_topic_ids) if session_topic_ids else False)
+    )
+    skill_stats: list[dict] = []
+    for skill in skill_rows.scalars().all():
+        if skill.kind == "application":
+            matched = [
+                r for r in scoring_data
+                if r.get("topic_id") == skill.topic_id
+                and normalize_question_type(r.get("question_type")) == "van_dung"
+            ]
+        else:
+            matched = [
+                r for r in scoring_data
+                if r.get("topic_id") == skill.topic_id
+                and normalize_question_type(r.get("question_type")) in ("nhan_biet", "thong_hieu")
+            ]
+        if not matched:
+            continue
+        s_correct = sum(1 for r in matched if r["is_correct"])
+        skill_stats.append(
+            {
+                "skill_id": skill.id,
+                "skill_name": skill.name,
+                "kind": skill.kind,
+                "topic_id": skill.topic_id,
+                "total": len(matched),
+                "correct": s_correct,
+                "accuracy": round(s_correct / len(matched), 4),
+            }
+        )
+    skill_stats.sort(key=lambda s: -s["accuracy"])
+
     # Difficulty-level breakdown
     difficulty_stats: dict[str, dict] = {}
     for row in scoring_data:
@@ -737,6 +775,17 @@ async def get_session_explanation(
             f"{weak_bloom[0]} ({weak_bloom[1]['correct']}/{weak_bloom[1]['total']} đúng)."
         )
 
+    if skill_stats:
+        best_skill = skill_stats[0]
+        worst_skill = skill_stats[-1]
+        if best_skill["skill_id"] != worst_skill["skill_id"]:
+            narrative.append(
+                f"Xét theo tầng kỹ năng của ontology: bạn thể hiện tốt nhất ở kỹ năng "
+                f"\"{best_skill['skill_name']}\" ({best_skill['correct']}/{best_skill['total']} đúng) "
+                f"và cần rèn thêm kỹ năng \"{worst_skill['skill_name']}\" "
+                f"({worst_skill['correct']}/{worst_skill['total']} đúng)."
+            )
+
     guessed = [q for q in questions_detail if q["guessing_flag"]]
     if guessed:
         narrative.append(
@@ -770,6 +819,7 @@ async def get_session_explanation(
         "questions": questions_detail,
         "bloom_stats": bloom_stats,
         "difficulty_stats": difficulty_stats,
+        "skill_stats": skill_stats,
         "narrative": narrative,
     }
 

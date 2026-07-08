@@ -303,10 +303,26 @@ Sau mỗi phiên, hệ thống có thể cung cấp:
 | POST | `/api/quiz/:id/submit` | Nộp bài thi tĩnh |
 | GET | `/api/quiz/:id/results` | Lấy kết quả chi tiết |
 | GET | `/api/quiz/:id/rule-logs` | Lấy log các rule đã áp dụng khi sinh đề/chấm đề |
-| GET | `/api/knowledge/subjects/:id/ability-graph` | Đồ thị tri thức năng lực cá nhân |
+| GET | `/api/knowledge/subjects/:id/ability-graph` | Đồ thị tri thức năng lực cá nhân (kèm tầng Kỹ năng) |
+| GET | `/api/users/learning-path` | Lộ trình học đề xuất theo đồ thị tiên quyết |
 | GET | `/api/users/dashboard` | Lấy dữ liệu dashboard của người dùng |
 
 ## Các mô-đun nâng cấp (Project 2 – 2026)
+
+### So sánh với phiên bản trước (điểm khác biệt, mở rộng)
+
+| Khía cạnh | Phiên bản trước (nhánh 1.0) | Phiên bản Project 2 (nhánh 2.0) |
+|---|---|---|
+| Cơ chế thích ứng | CAT chọn **từng câu** sau mỗi lần trả lời | **Multi-stage testing theo đề**: chấm cả đề rồi sinh đề kế tiếp |
+| Phạm vi áp dụng luật R1-R12 | Cấp độ câu hỏi | Cấp độ đề thi (blueprint, dành slot, lọc pool) |
+| Ước lượng năng lực | Bayesian EAP trong một phiên | EAP **tích lũy trên toàn chuỗi đề** + damping R7 |
+| Dự đoán năng lực theo thời gian | Không có | **Deep Knowledge Tracing** (RNN, numpy thuần) |
+| Chiến lược điều hướng độ khó | Luật R2/R3 cố định | R2/R3 **hoặc Reinforcement Learning** (contextual bandit, reward = ΔSEM) |
+| Giải thích kết quả | Chỉ rule logs khi chọn câu | **Explainable AI**: Δθ từng câu, Fisher share, narrative tiếng Việt |
+| Ontology | Môn học → Chủ đề lớn → Topic + Bloom + độ khó | Bổ sung **tầng Kỹ năng** (2 kỹ năng/topic, đo qua nhóm Bloom) |
+| Trực quan hóa năng lực | Radar chart theo topic | **Đồ thị tri thức năng lực cá nhân** (node mastery + cạnh tiên quyết/suy diễn) |
+| Lộ trình học | Gợi ý topic tiên quyết rời rạc | **Learning path** sắp xếp topo trên đồ thị tiên quyết |
+| Đánh giá hệ thống | Calibration độ khó | + **Mô phỏng hội tụ** so sánh 4 chiến lược (bias/RMSE/corr/SEM) |
 
 ### 1. Kiểm tra thích ứng theo đề (Multi-Stage Testing)
 
@@ -355,7 +371,20 @@ Hiển thị trong trang kết quả từng đề.
 riêng của người dùng; trang Bản đồ tri thức có chế độ "Đồ thị năng lực": node tô màu theo
 5 mức mastery, cạnh liền là quan hệ tiên quyết, cạnh đứt là quan hệ suy diễn (R12).
 
-### 6. Đánh giá toán học độ hội tụ năng lực
+### 6. Tầng Kỹ năng trong ontology và Lộ trình học
+
+Ontology đầy đủ 4 thành phần theo đề bài: **Môn học, Kỹ năng, Bloom Taxonomy, Độ khó**.
+Mỗi topic có 2 kỹ năng đo được (bảng `skills`, seed tự động lúc khởi động):
+"Hiểu và trình bày …" đo qua câu Nhận biết/Thông hiểu, "Vận dụng … giải quyết bài toán"
+đo qua câu Vận dụng. Kỹ năng hiển thị trong đồ thị năng lực và phần XAI
+"kỹ năng đo được" của trang kết quả.
+
+`GET /api/users/learning-path?subject_id=` sinh **lộ trình học đề xuất**: sắp xếp topo
+trên đồ thị tiên quyết (TopicPrerequisite + KnowledgeGraph), ưu tiên kiến thức nền của
+các topic yếu, loại topic đã thành thạo; hiển thị dạng timeline trong trang tổng kết
+chuỗi đề.
+
+### 7. Đánh giá toán học độ hội tụ năng lực
 
 Mô-đun mô phỏng `backend/app/evaluation/convergence.py` (CLI:
 `python -m app.evaluation.convergence --subject 2`) giả lập sinh viên có θ thật trải đều

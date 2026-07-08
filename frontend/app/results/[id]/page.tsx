@@ -299,6 +299,31 @@ export default function ResultsPage() {
                 </div>
               </div>
 
+              {/* Skill layer */}
+              {explanation.skill_stats && explanation.skill_stats.length > 0 && (
+                <div>
+                  <p className="text-sm font-medium mb-2">Kỹ năng đo được (tầng Kỹ năng của ontology)</p>
+                  <div className="space-y-1.5">
+                    {explanation.skill_stats.map((s) => (
+                      <div key={s.skill_id} className="flex items-center gap-2 text-xs">
+                        <span
+                          className={
+                            s.kind === "application"
+                              ? "w-2 h-2 shrink-0 rounded-full bg-purple-500"
+                              : "w-2 h-2 shrink-0 rounded-full bg-sky-500"
+                          }
+                        />
+                        <span className="flex-1 truncate" title={s.skill_name}>{s.skill_name}</span>
+                        <Progress value={s.accuracy * 100} className="h-2 w-32 shrink-0" />
+                        <span className="w-16 shrink-0 text-right text-muted-foreground">
+                          {s.correct}/{s.total} đúng
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Bloom + difficulty tables */}
               <div className="grid gap-4 md:grid-cols-2">
                 <div>

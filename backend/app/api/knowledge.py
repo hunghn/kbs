@@ -5,7 +5,7 @@ from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 from app.database import get_db
 from app.api.auth import get_current_user
-from app.models.knowledge import Subject, MajorTopic, Topic, TopicPrerequisite
+from app.models.knowledge import Subject, MajorTopic, Topic, TopicPrerequisite, Skill
 from app.models.question import Question
 from app.models.user import User, UserTopicProgress
 from app.models.cat_knowledge import KnowledgeGraph
@@ -139,6 +139,15 @@ async def get_ability_graph(
     )
     count_map = {tid: cnt for tid, cnt in count_result.all()}
 
+    skills_result = await db.execute(
+        select(Skill).where(Skill.topic_id.in_(topic_ids) if topic_ids else False)
+    )
+    skills_map: dict[int, list[dict]] = {}
+    for s in skills_result.scalars().all():
+        skills_map.setdefault(s.topic_id, []).append(
+            {"id": s.id, "name": s.name, "kind": s.kind}
+        )
+
     nodes = []
     for t, mt in rows:
         p = progress.get(t.id)
@@ -156,6 +165,7 @@ async def get_ability_graph(
                 "mastery": p.mastery_level if p else None,
                 "attempted": int(p.questions_attempted or 0) if p else 0,
                 "correct": int(p.questions_correct or 0) if p else 0,
+                "skills": sorted(skills_map.get(t.id, []), key=lambda s: s["kind"]),
             }
         )
 

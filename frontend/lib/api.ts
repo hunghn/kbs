@@ -159,6 +159,9 @@ export const userAPI = {
 
   getAbilityPrediction: (subjectId: number) =>
     fetchAPI<DKTPredictionInfo>(`/users/ability-prediction?subject_id=${subjectId}`),
+
+  getLearningPath: (subjectId: number) =>
+    fetchAPI<LearningPathInfo>(`/users/learning-path?subject_id=${subjectId}`),
 };
 
 // Admin
@@ -255,6 +258,12 @@ export interface SubjectTree {
   }[];
 }
 
+export interface SkillInfo {
+  id: number;
+  name: string;
+  kind: "comprehension" | "application";
+}
+
 export interface AbilityGraphNode {
   id: number;
   code?: string;
@@ -268,6 +277,7 @@ export interface AbilityGraphNode {
   mastery?: string | null;
   attempted: number;
   correct: number;
+  skills: SkillInfo[];
 }
 
 export interface AbilityGraphEdge {
@@ -396,6 +406,28 @@ export interface ChainSummaryInfo {
   recommendations: LearningRecommendation[];
 }
 
+export interface LearningPathStepInfo {
+  order: number;
+  topic_id: number;
+  code?: string;
+  name: string;
+  major_topic_name: string;
+  status: "weak" | "in_progress" | "not_started" | "mastered";
+  theta?: number | null;
+  mastery?: string | null;
+  attempted: number;
+  correct: number;
+  reason: string;
+  prerequisite_names: string[];
+}
+
+export interface LearningPathInfo {
+  subject_id: number;
+  total_topics: number;
+  mastered_count: number;
+  steps: LearningPathStepInfo[];
+}
+
 export interface DKTPredictionInfo {
   subject_id: number;
   history_length: number;
@@ -435,6 +467,15 @@ export interface ExplanationInfo {
   questions: ExplanationQuestionInfo[];
   bloom_stats: Record<string, { total: number; correct: number; accuracy: number }>;
   difficulty_stats: Record<string, { total: number; correct: number; accuracy: number }>;
+  skill_stats: {
+    skill_id: number;
+    skill_name: string;
+    kind: string;
+    topic_id: number;
+    total: number;
+    correct: number;
+    accuracy: number;
+  }[];
   narrative: string[];
 }
 

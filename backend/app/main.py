@@ -77,6 +77,14 @@ async def lifespan(app: FastAPI):
                 "ADD COLUMN IF NOT EXISTS rl_action INTEGER"
             )
         )
+
+    # Seed the Skill ontology layer for topics that don't have skills yet
+    from app.database import async_session
+    from app.data.skill_seed import seed_skills
+
+    async with async_session() as session:
+        await seed_skills(session)
+
     yield
     await engine.dispose()
 

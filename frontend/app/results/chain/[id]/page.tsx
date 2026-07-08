@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { authAPI, adaptiveAPI, type ChainSummaryInfo } from "@/lib/api";
+import { authAPI, adaptiveAPI, userAPI, type ChainSummaryInfo, type LearningPathInfo } from "@/lib/api";
 import { Navbar } from "@/components/layout/navbar";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -66,6 +66,7 @@ export default function ChainSummaryPage() {
   const router = useRouter();
   const [user, setUser] = useState<{ id: number; username: string } | null>(null);
   const [summary, setSummary] = useState<ChainSummaryInfo | null>(null);
+  const [learningPath, setLearningPath] = useState<LearningPathInfo | null>(null);
   const [loading, setLoading] = useState(true);
 
   const loadData = useCallback(async () => {
@@ -74,6 +75,11 @@ export default function ChainSummaryPage() {
       setUser(me);
       const data = await adaptiveAPI.getSummary(Number(id));
       setSummary(data);
+      try {
+        setLearningPath(await userAPI.getLearningPath(data.subject_id));
+      } catch {
+        setLearningPath(null);
+      }
     } catch {
       router.push("/");
     }
@@ -263,6 +269,54 @@ export default function ChainSummaryPage() {
             </div>
           </CardContent>
         </Card>
+
+        {/* Learning path */}
+        {learningPath && learningPath.steps.length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Lộ trình học đề xuất</CardTitle>
+              <CardDescription>
+                Sắp xếp theo quan hệ tiên quyết trong ontology — học kiến thức nền trước, chủ đề phụ thuộc sau
+                ({learningPath.mastered_count}/{learningPath.total_topics} chủ đề đã thành thạo, không cần ôn lại)
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ol className="relative space-y-0 border-l-2 border-muted ml-3">
+                {learningPath.steps.map((step) => {
+                  const statusColor =
+                    step.status === "weak" ? "bg-red-500" :
+                    step.status === "in_progress" ? "bg-yellow-500" : "bg-slate-400";
+                  const statusLabel =
+                    step.status === "weak" ? "Cần củng cố" :
+                    step.status === "in_progress" ? "Đang tiến bộ" : "Chưa học";
+                  return (
+                    <li key={step.topic_id} className="relative pl-6 pb-4">
+                      <span className={`absolute -left-[9px] top-1 h-4 w-4 rounded-full border-2 border-background ${statusColor}`} />
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-xs font-bold text-muted-foreground">Bước {step.order}</span>
+                        <span className="font-medium">{step.code} {step.name}</span>
+                        <span className={`rounded-full px-2 py-0.5 text-xs text-white ${statusColor}`}>
+                          {statusLabel}
+                        </span>
+                        {step.attempted > 0 && (
+                          <span className="text-xs text-muted-foreground">
+                            {step.correct}/{step.attempted} đúng{step.theta != null ? ` · θ ${step.theta.toFixed(2)}` : ""}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-0.5">{step.reason}</p>
+                      {step.prerequisite_names.length > 0 && (
+                        <p className="text-xs text-muted-foreground">
+                          Tiên quyết: {step.prerequisite_names.join(", ")}
+                        </p>
+                      )}
+                    </li>
+                  );
+                })}
+              </ol>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Recommendations */}
         {summary.recommendations.length > 0 && (

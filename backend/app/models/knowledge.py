@@ -40,11 +40,32 @@ class Topic(Base):
 
     major_topic = relationship("MajorTopic", back_populates="topics")
     questions = relationship("Question", back_populates="topic", cascade="all, delete-orphan")
+    skills = relationship("Skill", back_populates="topic", cascade="all, delete-orphan")
     prerequisites = relationship(
         "TopicPrerequisite",
         foreign_keys="TopicPrerequisite.topic_id",
         back_populates="topic",
         cascade="all, delete-orphan",
+    )
+
+
+class Skill(Base):
+    """Kỹ năng đo được của một Topic — tầng Kỹ năng trong ontology.
+
+    Mỗi topic có 2 kỹ năng: "comprehension" (đo qua câu Nhận biết/Thông hiểu)
+    và "application" (đo qua câu Vận dụng), nối tri thức topic với thang Bloom.
+    """
+    __tablename__ = "skills"
+
+    id = Column(Integer, primary_key=True, index=True)
+    topic_id = Column(Integer, ForeignKey("topics.id"), nullable=False)
+    name = Column(String(250), nullable=False)
+    kind = Column(String(20), nullable=False)  # comprehension | application
+
+    topic = relationship("Topic", back_populates="skills")
+
+    __table_args__ = (
+        UniqueConstraint("topic_id", "kind", name="uq_topic_skill_kind"),
     )
 
 

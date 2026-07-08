@@ -112,3 +112,21 @@ async def get_dashboard(
         topic_progress=topic_progress,
         recent_sessions=recent,
     )
+
+
+@user_router.get("/ability-prediction")
+async def get_ability_prediction(
+    subject_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """DKT prediction: P(correct next) per topic for the current user."""
+    from app.services.dkt_service import predict_user_mastery
+
+    try:
+        return await predict_user_mastery(db, subject_id, user.id)
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=404,
+            detail="DKT model chưa được huấn luyện cho môn này. Gọi POST /api/quiz/dkt/train trước.",
+        )

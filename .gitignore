@@ -24,3 +24,6 @@ Thumbs.db
 # Temp
 *.log
 analyze_data.py
+
+# DKT trained models
+backend/models_store/

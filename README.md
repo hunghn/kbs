@@ -1,6 +1,6 @@
 # KBS - Hệ thống Kiểm tra Tri thức Thông minh
 
-KBS là hệ thống quản lý tri thức và kiểm tra năng lực học tập dựa trên mô hình tri thức quan hệ, ontology và IRT 3PL. Hệ thống tập trung vào hai miền tri thức chính là Toán rời rạc và Cơ sở dữ liệu SQL, đồng thời hỗ trợ CAT (Computerized Adaptive Testing) để chọn câu hỏi thích ứng theo năng lực người học.
+KBS là hệ thống quản lý tri thức và kiểm tra năng lực học tập dựa trên mô hình tri thức quan hệ, ontology và IRT 3PL. Hệ thống tập trung vào hai miền tri thức chính là Toán rời rạc và Cơ sở dữ liệu SQL, đồng thời hỗ trợ kiểm tra thích ứng **theo đề** (multi-stage adaptive testing): người học làm trọn từng đề thi, hệ thống đánh giá cả đề rồi dùng bộ luật suy diễn để sinh đề kế tiếp phù hợp với năng lực.
 
 ## Tổng quan
 
@@ -9,10 +9,16 @@ Mục tiêu của hệ thống:
 - Quản lý ngân hàng câu hỏi theo môn học, chủ đề lớn và topic.
 - Tổ chức tri thức theo cấu trúc ontology và quan hệ tiên quyết.
 - Đánh giá năng lực người học bằng tham số $\theta$ trong IRT 3PL.
-- Chọn câu hỏi kế tiếp theo cơ chế CAT kết hợp rule-based filtering và Fisher Information.
-- Ước lượng năng lực và độ bất định bằng Bayesian EAP (độ bất định expose qua trường `sem`, bản chất là posterior SD).
+- Sinh đề thi kế tiếp theo cơ chế multi-stage testing: rule-based filtering (R1-R12) kết hợp Fisher Information, hoặc chiến lược Reinforcement Learning.
+- Ước lượng năng lực và độ bất định bằng Bayesian EAP tích lũy trên toàn chuỗi đề (độ bất định expose qua trường `sem`, bản chất là posterior SD).
+- Dự đoán năng lực theo thời gian thực bằng Deep Knowledge Tracing.
+- Giải thích kết quả đánh giá bằng mô-đun Explainable AI.
 - Sinh bổ sung câu hỏi bằng LLM khi question bank chưa đủ item phù hợp.
-- Trả kết quả chi tiết, tiến trình năng lực và gợi ý học lại kiến thức nền.
+- Trả kết quả chi tiết, tiến trình năng lực, đồ thị tri thức năng lực cá nhân và gợi ý học lại kiến thức nền.
+
+> Lưu ý: các mô tả "chọn từng câu kế tiếp" trong phần luồng vận hành bên dưới là thiết kế
+> gốc; từ bản nâng cấp 2026, các luật R1-R12 được áp dụng **ở cấp độ đề** — xem mục
+> "Các mô-đun nâng cấp (Project 2 – 2026)".
 
 ## Kiến trúc hệ thống
 
@@ -280,15 +286,84 @@ Sau mỗi phiên, hệ thống có thể cung cấp:
 | GET | `/api/knowledge/subjects/:id/tree` | Lấy cây ontology của môn học |
 | GET | `/api/knowledge/topics` | Lấy danh sách topic |
 | POST | `/api/quiz/start` | Tạo bài thi tĩnh theo phân bổ loại câu hỏi |
-| POST | `/api/quiz/start-cat` | Bắt đầu phiên CAT |
-| POST | `/api/quiz/:id/answer` | Gửi đáp án một câu CAT và lấy câu tiếp theo |
+| POST | `/api/quiz/adaptive/start` | Tạo chuỗi đề thích ứng và sinh đề #1 (luật R1) |
+| POST | `/api/quiz/adaptive/:chainId/submit` | Nộp trọn một đề, chấm và cập nhật θ/SEM tích lũy |
+| POST | `/api/quiz/adaptive/:chainId/next` | Sinh đề kế tiếp theo luật R1-R12 (hoặc RL) |
+| POST | `/api/quiz/adaptive/:chainId/finish` | Người dùng kết thúc chuỗi đề |
+| GET | `/api/quiz/adaptive/:chainId` | Trạng thái chuỗi đề (resume đề đang dở) |
+| GET | `/api/quiz/adaptive/:chainId/summary` | Báo cáo tổng kết toàn chuỗi đề |
+| GET | `/api/quiz/adaptive/rl-policy` | Q-table của bandit điều hướng độ khó |
+| POST | `/api/quiz/dkt/train` | Huấn luyện mô hình Deep Knowledge Tracing cho môn học |
+| GET | `/api/users/ability-prediction` | Dự đoán DKT: P(đúng câu tiếp theo) theo từng topic |
+| GET | `/api/quiz/:id/explanation` | Explainable AI: phân rã Δθ, Fisher Information, narrative |
+| GET | `/api/quiz/evaluation/convergence` | Mô phỏng đánh giá độ hội tụ năng lực giữa các chiến lược |
 | POST | `/api/quiz/generate-question` | Sinh bản nháp câu hỏi theo topic bằng LLM |
 | GET | `/api/quiz/evaluation/difficulty-calibration` | Báo cáo calibration theo độ khó |
 | GET | `/api/quiz/:id/questions` | Lấy danh sách câu hỏi của phiên tĩnh |
 | POST | `/api/quiz/:id/submit` | Nộp bài thi tĩnh |
 | GET | `/api/quiz/:id/results` | Lấy kết quả chi tiết |
-| GET | `/api/quiz/:id/rule-logs` | Lấy log các rule đã áp dụng trong CAT |
+| GET | `/api/quiz/:id/rule-logs` | Lấy log các rule đã áp dụng khi sinh đề/chấm đề |
+| GET | `/api/knowledge/subjects/:id/ability-graph` | Đồ thị tri thức năng lực cá nhân |
 | GET | `/api/users/dashboard` | Lấy dữ liệu dashboard của người dùng |
+
+## Các mô-đun nâng cấp (Project 2 – 2026)
+
+### 1. Kiểm tra thích ứng theo đề (Multi-Stage Testing)
+
+Hệ thống đã chuyển từ CAT chọn từng câu sang thích ứng theo **chuỗi đề** (`exam_chains`):
+người học làm trọn một đề (số câu tự chọn), hệ thống chấm cả đề, cập nhật θ/SEM tích lũy
+bằng Bayesian EAP trên toàn chuỗi, rồi áp bộ luật R1-R12 để **sinh đề kế tiếp**.
+Giữa các đề có màn đánh giá trung gian; chuỗi dừng khi `SEM < 0.3`, đạt số đề tối đa,
+hết câu phù hợp, hoặc người dùng chủ động kết thúc.
+
+- Engine sinh đề: `backend/app/services/exam_generation.py`
+- Router: `backend/app/api/adaptive.py`
+- Diễn giải luật ở cấp độ đề: R1 blueprint đề #1; R2/R3 đặt `b_target` theo độ chính xác
+  đề trước; R5 xoay topic mastered; R6 lọc Nhận biết khi θ cao; R8 chống lặp trong chuỗi
+  và cross-session; R11 chèn câu tiên quyết dễ khi sai liên tiếp; R12 dành slot cho topic
+  suy diễn; R9/R10 gọi LLM lấp chỗ trống quanh `b_target`; R7 phát hiện đoán mò khi chấm.
+
+### 2. Deep Knowledge Tracing (DKT)
+
+Mạng RNN (cài đặt thuần numpy theo Piech et al. 2015, `backend/app/engine/dkt.py`) học từ
+chuỗi tương tác (topic, đúng/sai) để dự đoán xác suất trả lời đúng câu tiếp theo trên từng
+topic — mô hình hóa năng lực **biến đổi theo thời gian**, bổ trợ cho ước lượng EAP tĩnh.
+Huấn luyện trên log `quiz_responses` thật, tăng cường bằng sinh viên giả lập qua IRT 3PL
+trên chính ngân hàng câu hỏi. Model lưu per-subject tại `backend/models_store/`.
+Dashboard hiển thị card "Dự đoán năng lực (DKT)".
+
+### 3. Reinforcement Learning cho chiến lược chọn đề
+
+Contextual bandit (`backend/app/engine/rl_policy.py`) học offset độ khó tối ưu thay cho
+R2/R3 cố định: state = (độ chính xác đề trước × mức SEM), action = offset
+{−0.7, −0.3, 0, +0.3, +0.5}, reward = mức giảm SEM sau đề (lượng thông tin thu được),
+chọn ε-greedy với ε giảm dần, Q-value lưu trong bảng `rl_policy`. Người dùng chọn chiến
+lược "Luật R2/R3" hoặc "Reinforcement Learning" ở màn thiết lập; mọi quyết định và reward
+của bandit được ghi vào rule logs (mã `RL`) để audit.
+
+### 4. Explainable AI cho đánh giá
+
+`GET /api/quiz/:id/explanation` phân rã kết quả đánh giá: Δθ do từng câu đóng góp
+(theo timeline EAP), tỷ trọng Fisher Information của từng câu tại θ cuối, thống kê theo
+thang Bloom và theo mức độ khó, kèm **narrative tiếng Việt** sinh bằng luật giải thích
+vì sao θ đạt giá trị đó, câu nào ảnh hưởng mạnh nhất và kỹ năng nào đo được.
+Hiển thị trong trang kết quả từng đề.
+
+### 5. Đồ thị tri thức năng lực cá nhân
+
+`GET /api/knowledge/subjects/:id/ability-graph` trả về ontology topic của môn kèm mastery
+riêng của người dùng; trang Bản đồ tri thức có chế độ "Đồ thị năng lực": node tô màu theo
+5 mức mastery, cạnh liền là quan hệ tiên quyết, cạnh đứt là quan hệ suy diễn (R12).
+
+### 6. Đánh giá toán học độ hội tụ năng lực
+
+Mô-đun mô phỏng `backend/app/evaluation/convergence.py` (CLI:
+`python -m app.evaluation.convergence --subject 2`) giả lập sinh viên có θ thật trải đều
+[-2.5, 2.5] làm bài qua engine thật, so sánh 4 chiến lược sinh đề (luật R1-R12, Fisher tối
+ưu, ngẫu nhiên, RL) theo bias / RMSE / MAE / tương quan Pearson / tỷ lệ hội tụ SEM < 0.3 /
+quỹ đạo SEM theo số đề. Trang `/evaluation` chạy mô phỏng và trực quan hóa kết quả.
+Kết quả tham chiếu (15 SV, 6 câu/đề, 5 đề, môn Toán rời rạc): chiến lược luật đạt
+RMSE ≈ 0.30 và tương quan ≈ 0.99 với θ thật, vượt trội chọn ngẫu nhiên (RMSE ≈ 0.56).
 
 ## Dữ liệu
 

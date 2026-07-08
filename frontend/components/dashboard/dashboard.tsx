@@ -11,6 +11,7 @@ import {
   CheckCircle2, Clock, ArrowRight,
 } from "lucide-react";
 import { RadarChart } from "@/components/dashboard/radar-chart";
+import { DKTPrediction } from "@/components/dashboard/dkt-prediction";
 
 export function Dashboard() {
   const [dashboard, setDashboard] = useState<DashboardInfo | null>(null);
@@ -131,6 +132,9 @@ export function Dashboard() {
           </CardContent>
         </Card>
       </div>
+
+      {/* DKT prediction */}
+      <DKTPrediction />
 
       {/* Recent sessions */}
       {dashboard?.recent_sessions && dashboard.recent_sessions.length > 0 && (

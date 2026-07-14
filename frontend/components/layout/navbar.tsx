@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { BookOpen, LogOut, LayoutDashboard, Map, GraduationCap, Database, SlidersHorizontal, LineChart } from "lucide-react";
+import { BookOpen, LogOut, LayoutDashboard, Map, GraduationCap, Database, SlidersHorizontal, LineChart, Network } from "lucide-react";
 
 interface NavbarProps {
   user: { id: number; username: string };
@@ -61,6 +61,10 @@ export function Navbar({ user, onLogout }: NavbarProps) {
           <Link href="/evaluation" className={linkClass("/evaluation")}>
             <LineChart className="h-4 w-4" />
             Đánh giá hệ thống
+          </Link>
+          <Link href="/architecture" className={linkClass("/architecture")}>
+            <Network className="h-4 w-4" />
+            Multi-Agent
           </Link>
           <Link href="/admin/settings" className={linkClass("/admin/settings")}>
             <SlidersHorizontal className="h-4 w-4" />

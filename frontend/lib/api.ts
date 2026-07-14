@@ -172,6 +172,11 @@ export const evaluationAPI = {
   },
 };
 
+// Multi-Agent System architecture
+export const agentsAPI = {
+  getArchitecture: () => fetchAPI<AgentArchitectureInfo>("/agents"),
+};
+
 // Users
 export const userAPI = {
   getDashboard: () => fetchAPI<DashboardInfo>("/users/dashboard"),
@@ -547,6 +552,24 @@ export interface CalibrationRunInfo {
     b_new: number;
     shift: number;
   }[];
+}
+
+export interface AgentInfo {
+  id: string;
+  name: string;
+  role: string;
+  module: string;
+  rules: string[];
+  endpoints: string[];
+  kind: "symbolic" | "llm" | "neural";
+  activity_count: number;
+}
+
+export interface AgentArchitectureInfo {
+  agents: AgentInfo[];
+  edges: { from: string; to: string; label: string }[];
+  rule_activity: Record<string, number>;
+  externals: { id: string; name: string }[];
 }
 
 export interface ConvergenceStrategyInfo {

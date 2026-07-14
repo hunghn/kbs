@@ -10,6 +10,7 @@ from app.api.users import router as auth_router, user_router
 from app.api.questions import router as questions_router
 from app.api.admin import router as admin_router
 from app.api.adaptive import router as adaptive_router
+from app.api.agents import router as agents_router
 
 
 @asynccontextmanager
@@ -120,6 +121,7 @@ app.include_router(quiz_router)
 app.include_router(questions_router)
 app.include_router(admin_router)
 app.include_router(adaptive_router)
+app.include_router(agents_router)
 
 
 @app.get("/api/health")

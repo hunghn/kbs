@@ -402,7 +402,27 @@ Bốn cơ chế làm hệ thống tự cải thiện tri thức và mô hình ng
   EAP được khởi tạo từ trung bình UserAbility và dự đoán DKT (`exam_chains.prior_theta`),
   đề #1 sinh quanh θ₀ đó và toàn chuỗi dùng prior chặt hơn (sd 0.8); ghi log luật `R0`.
 
-### 8. Đánh giá toán học độ hội tụ năng lực
+### 8. Kiến trúc Multi-Agent System
+
+Hệ thống được tổ chức thành 9 tác tử chuyên biệt trao đổi thông điệp quanh Planner
+(`backend/app/agents/registry.py`, `GET /api/agents`, trang `/architecture`):
+
+| Tác tử | Loại | Luật sở hữu | Nhiệm vụ |
+|---|---|---|---|
+| Planner | ký hiệu | R1-R6, R8, R11, R12 | Dựng blueprint đề kế tiếp |
+| Generator | LLM | R9 | Sinh câu hỏi theo Bloom + mục tiêu IRT |
+| Validator | LLM | R10 | Tự giải lại, thẩm định, gán b dự kiến |
+| Assessor | ký hiệu | R7, BLOOM | Chấm đề, EAP, phát hiện đoán mò |
+| Knowledge Tracer | neural | R0 | DKT + prior warm-start |
+| Strategist | neural | RL | Bandit học offset độ khó |
+| Explainer | ký hiệu | — | XAI, ngộ nhận, narrative |
+| Calibrator | ký hiệu | — | Hiệu chuẩn b từ log thật |
+| Pathfinder | ký hiệu | — | Lộ trình học theo tiên quyết |
+
+Mức độ hoạt động của từng tác tử đo trực tiếp từ `inference_rule_logs` (mỗi lần một
+luật kích hoạt là một quyết định của tác tử sở hữu luật đó) và hiển thị trên sơ đồ.
+
+### 9. Đánh giá toán học độ hội tụ năng lực
 
 Mô-đun mô phỏng `backend/app/evaluation/convergence.py` (CLI:
 `python -m app.evaluation.convergence --subject 2`) giả lập sinh viên có θ thật trải đều

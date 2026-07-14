@@ -36,6 +36,10 @@ services:
       - "3000:3000"
     environment:
       BACKEND_URL: "http://backend:8000"
+      # Windows bind mounts don't propagate file events into Linux containers;
+      # poll so `next dev` picks up host-side edits.
+      WATCHPACK_POLLING: "true"
+      CHOKIDAR_USEPOLLING: "true"
     depends_on:
       - backend
     volumes:

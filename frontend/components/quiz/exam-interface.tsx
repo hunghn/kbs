@@ -95,19 +95,17 @@ export function ExamInterface({ exam, initialAnswers, onDraftChange, onSubmit }:
   }, [timeLeft]);
 
   const selectAnswer = (questionId: number, option: string) => {
-    setAnswers((prev) => {
-      if (!prev[questionId]) {
-        const now = Date.now();
-        timeSpent.current[questionId] = Math.max(
-          1,
-          Math.round((now - lastInteractionAt.current) / 1000)
-        );
-        lastInteractionAt.current = now;
-      }
-      const next = { ...prev, [questionId]: option };
-      onDraftChange?.(next);
-      return next;
-    });
+    if (!answers[questionId]) {
+      const now = Date.now();
+      timeSpent.current[questionId] = Math.max(
+        1,
+        Math.round((now - lastInteractionAt.current) / 1000)
+      );
+      lastInteractionAt.current = now;
+    }
+    const next = { ...answers, [questionId]: option };
+    setAnswers(next);
+    onDraftChange?.(next);
   };
 
   const progressPct = exam.questions.length > 0

@@ -45,6 +45,9 @@ services:
     volumes:
       - ./frontend:/app
       - /app/node_modules
+      # Keep the container's build cache separate from host `npm run build`
+      # artifacts — sharing .next makes Turbopack serve stale chunks.
+      - /app/.next
 
 volumes:
   pgdata:

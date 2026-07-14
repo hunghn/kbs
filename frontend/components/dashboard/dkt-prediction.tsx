@@ -72,7 +72,7 @@ export function DKTPrediction() {
               {prediction.predictions.map((p) => (
                 <div key={p.topic_id} className="flex items-center gap-2 text-xs">
                   <span className="w-44 shrink-0 truncate" title={p.topic_name}>
-                    {p.code} {p.topic_name}
+                    {p.code && !p.topic_name.startsWith(p.code) ? `${p.code} ` : ""}{p.topic_name}
                   </span>
                   <Progress value={p.p_correct_next * 100} className="h-2 flex-1" />
                   <span className="w-12 shrink-0 text-right font-mono">

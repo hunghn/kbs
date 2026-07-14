@@ -294,7 +294,9 @@ export default function ChainSummaryPage() {
                       <span className={`absolute -left-[9px] top-1 h-4 w-4 rounded-full border-2 border-background ${statusColor}`} />
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="text-xs font-bold text-muted-foreground">Bước {step.order}</span>
-                        <span className="font-medium">{step.code} {step.name}</span>
+                        <span className="font-medium">
+                          {step.code && !step.name.startsWith(step.code) ? `${step.code} ` : ""}{step.name}
+                        </span>
                         <span className={`rounded-full px-2 py-0.5 text-xs text-white ${statusColor}`}>
                           {statusLabel}
                         </span>

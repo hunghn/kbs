@@ -102,6 +102,15 @@ export const quizAPI = {
     }),
 };
 
+// Preset exams (đề có sẵn)
+export const presetAPI = {
+  list: (subjectId: number) =>
+    fetchAPI<PresetExamInfo[]>(`/quiz/presets?subject_id=${subjectId}`),
+
+  start: (presetId: number) =>
+    fetchAPI<PresetStartInfo>(`/quiz/presets/${presetId}/start`, { method: "POST" }),
+};
+
 // Exam-batch adaptive testing (multi-stage)
 export const adaptiveAPI = {
   start: (config: AdaptiveStartConfig) =>
@@ -335,6 +344,23 @@ export interface LearningRecommendation {
   prerequisite_topic_id?: number;
   prerequisite_topic_name?: string;
   reason: string;
+}
+
+export interface PresetExamInfo {
+  id: number;
+  name: string;
+  description?: string;
+  question_count: number;
+  bloom_counts: Record<string, number>;
+  topic_count: number;
+}
+
+export interface PresetStartInfo {
+  session_id: number;
+  preset_id: number;
+  preset_name: string;
+  subject_id: number;
+  questions: QuestionInfo[];
 }
 
 export interface AdaptiveStartConfig {

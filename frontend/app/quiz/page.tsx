@@ -6,6 +6,8 @@ import {
   authAPI,
   knowledgeAPI,
   adaptiveAPI,
+  presetAPI,
+  quizAPI,
   type SubjectSummary,
   type AdaptiveExamInfo,
   type ExamEvaluationInfo,
@@ -15,6 +17,9 @@ import { Navbar } from "@/components/layout/navbar";
 import { QuizSetup } from "@/components/quiz/quiz-setup";
 import { ExamInterface } from "@/components/quiz/exam-interface";
 import { ExamEvaluation } from "@/components/quiz/exam-evaluation";
+import { PresetList } from "@/components/quiz/preset-list";
+import { Button } from "@/components/ui/button";
+import { Sparkles, FileText } from "lucide-react";
 
 const CHAIN_STORAGE_KEY = "kbs_active_exam_chain_v1";
 
@@ -32,8 +37,10 @@ function QuizContent() {
   const searchParams = useSearchParams();
   const [user, setUser] = useState<{ id: number; username: string } | null>(null);
   const [subjects, setSubjects] = useState<SubjectSummary[]>([]);
-  const [phase, setPhase] = useState<"setup" | "exam" | "grading" | "evaluation">("setup");
+  const [phase, setPhase] = useState<"setup" | "exam" | "grading" | "evaluation" | "preset-exam">("setup");
+  const [mode, setMode] = useState<"adaptive" | "preset">("adaptive");
   const [exam, setExam] = useState<AdaptiveExamInfo | null>(null);
+  const [presetExam, setPresetExam] = useState<AdaptiveExamInfo | null>(null);
   const [evaluation, setEvaluation] = useState<ExamEvaluationInfo | null>(null);
   const [draftAnswers, setDraftAnswers] = useState<Record<number, string>>({});
 
@@ -168,6 +175,36 @@ function QuizContent() {
     if (exam) persistChain(exam, answers);
   };
 
+  const handleStartPreset = async (presetId: number) => {
+    const started = await presetAPI.start(presetId);
+    // Wrap the fixed exam into the shape ExamInterface renders
+    setPresetExam({
+      chain_id: 0,
+      session_id: started.session_id,
+      exam_index: 1,
+      max_exams: 1,
+      questions_per_exam: started.questions.length,
+      questions: started.questions,
+      theta: 0,
+      sem: 999,
+      applied_rules: [],
+      strategy: "preset",
+    });
+    setPhase("preset-exam");
+  };
+
+  const handleSubmitPreset = async (answers: AnswerSubmit[]) => {
+    if (!presetExam) return;
+    setPhase("grading");
+    try {
+      await quizAPI.submit(presetExam.session_id, answers);
+      router.push(`/results/${presetExam.session_id}`);
+    } catch (err) {
+      setPhase("preset-exam");
+      throw err;
+    }
+  };
+
   if (!user) return null;
 
   const defaultSubject = searchParams.get("subject")
@@ -186,10 +223,40 @@ function QuizContent() {
       />
       <main className="container py-6">
         {phase === "setup" && (
-          <QuizSetup
-            subjects={subjects}
-            defaultSubjectId={defaultSubject}
-            onStart={handleStartQuiz}
+          <div className="max-w-3xl mx-auto space-y-4">
+            <div className="flex gap-2">
+              <Button
+                variant={mode === "adaptive" ? "default" : "outline"}
+                size="sm"
+                onClick={() => setMode("adaptive")}
+              >
+                <Sparkles className="h-4 w-4 mr-1" />
+                Thi thích ứng (chuỗi đề)
+              </Button>
+              <Button
+                variant={mode === "preset" ? "default" : "outline"}
+                size="sm"
+                onClick={() => setMode("preset")}
+              >
+                <FileText className="h-4 w-4 mr-1" />
+                Đề có sẵn
+              </Button>
+            </div>
+            {mode === "adaptive" ? (
+              <QuizSetup
+                subjects={subjects}
+                defaultSubjectId={defaultSubject}
+                onStart={handleStartQuiz}
+              />
+            ) : (
+              <PresetList subjects={subjects} onStart={handleStartPreset} />
+            )}
+          </div>
+        )}
+        {phase === "preset-exam" && presetExam && (
+          <ExamInterface
+            exam={presetExam}
+            onSubmit={handleSubmitPreset}
           />
         )}
         {phase === "exam" && exam && (

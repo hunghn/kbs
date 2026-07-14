@@ -78,12 +78,14 @@ async def lifespan(app: FastAPI):
             )
         )
 
-    # Seed the Skill ontology layer for topics that don't have skills yet
+    # Seed the Skill ontology layer and preset exams (both idempotent)
     from app.database import async_session
     from app.data.skill_seed import seed_skills
+    from app.data.preset_seed import seed_preset_exams
 
     async with async_session() as session:
         await seed_skills(session)
+        await seed_preset_exams(session)
 
     yield
     await engine.dispose()

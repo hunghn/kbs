@@ -134,6 +134,127 @@ async def convergence_report(
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+@router.get("/presets")
+async def list_preset_exams(
+    subject_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Danh sách đề thi có sẵn của một môn (kèm phân bổ Bloom thực tế)."""
+    _ = user
+    from app.models.question import PresetExam, PresetExamQuestion
+
+    presets_result = await db.execute(
+        select(PresetExam)
+        .where(PresetExam.subject_id == subject_id)
+        .order_by(PresetExam.id.asc())
+    )
+    presets = presets_result.scalars().all()
+    if not presets:
+        return []
+
+    preset_ids = [p.id for p in presets]
+    rows = await db.execute(
+        select(PresetExamQuestion.preset_id, Question.question_type, Question.topic_id)
+        .join(Question, Question.id == PresetExamQuestion.question_id)
+        .where(PresetExamQuestion.preset_id.in_(preset_ids))
+    )
+    bloom_map: dict[int, dict[str, int]] = {}
+    topic_map: dict[int, set] = {}
+    for preset_id, qtype, topic_id in rows:
+        text = (qtype or "").strip().lower()
+        if "nhận" in text or "nhan" in text:
+            label = "Nhận biết"
+        elif "thông" in text or "thong" in text:
+            label = "Thông hiểu"
+        elif "vận" in text or "van" in text:
+            label = "Vận dụng"
+        else:
+            label = "Khác"
+        agg = bloom_map.setdefault(preset_id, {})
+        agg[label] = agg.get(label, 0) + 1
+        topic_map.setdefault(preset_id, set()).add(topic_id)
+
+    return [
+        {
+            "id": p.id,
+            "name": p.name,
+            "description": p.description,
+            "question_count": p.question_count,
+            "bloom_counts": bloom_map.get(p.id, {}),
+            "topic_count": len(topic_map.get(p.id, set())),
+        }
+        for p in presets
+    ]
+
+
+@router.post("/presets/{preset_id}/start")
+async def start_preset_exam(
+    preset_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Tạo phiên làm bài từ đề có sẵn; nộp bài qua POST /quiz/{session_id}/submit."""
+    from app.models.question import PresetExam, PresetExamQuestion
+
+    preset = await db.get(PresetExam, preset_id)
+    if not preset:
+        raise HTTPException(status_code=404, detail="Preset exam not found")
+
+    items_result = await db.execute(
+        select(PresetExamQuestion)
+        .where(PresetExamQuestion.preset_id == preset_id)
+        .order_by(PresetExamQuestion.position.asc())
+        .options(
+            selectinload(PresetExamQuestion.question)
+            .selectinload(Question.topic)
+            .selectinload(Topic.major_topic)
+        )
+    )
+    items = items_result.scalars().all()
+    if not items:
+        raise HTTPException(status_code=400, detail="Preset exam has no questions")
+
+    session = QuizSession(
+        user_id=user.id,
+        subject_id=preset.subject_id,
+        total_questions=len(items),
+    )
+    db.add(session)
+    await db.flush()
+    for item in items:
+        db.add(QuizResponse(session_id=session.id, question_id=item.question_id, is_correct=False))
+    await db.commit()
+
+    return {
+        "session_id": session.id,
+        "preset_id": preset.id,
+        "preset_name": preset.name,
+        "subject_id": preset.subject_id,
+        "questions": [
+            {
+                "id": it.question.id,
+                "external_id": it.question.external_id,
+                "stem": it.question.stem,
+                "option_a": it.question.option_a,
+                "option_b": it.question.option_b,
+                "option_c": it.question.option_c,
+                "option_d": it.question.option_d,
+                "question_type": it.question.question_type,
+                "time_limit_seconds": it.question.time_limit_seconds,
+                "time_display": it.question.time_display,
+                "topic_name": it.question.topic.name if it.question.topic else "",
+                "major_topic_name": (
+                    it.question.topic.major_topic.name
+                    if it.question.topic and it.question.topic.major_topic
+                    else ""
+                ),
+            }
+            for it in items
+        ],
+    }
+
+
 @router.post("/dkt/train")
 async def train_dkt_model(
     subject_id: int,

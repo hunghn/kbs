@@ -1,6 +1,43 @@
-from sqlalchemy import Column, Integer, String, Text, Numeric, ForeignKey, Boolean
+from sqlalchemy import Column, Integer, String, Text, Numeric, ForeignKey, Boolean, DateTime, UniqueConstraint
 from sqlalchemy.orm import relationship
+from sqlalchemy.sql import func
 from app.database import Base
+
+
+class PresetExam(Base):
+    """Đề thi có sẵn: bộ câu hỏi cố định, phân bổ đủ mức Bloom và phủ topic."""
+    __tablename__ = "preset_exams"
+
+    id = Column(Integer, primary_key=True, index=True)
+    subject_id = Column(Integer, ForeignKey("subjects.id"), nullable=False)
+    name = Column(String(100), nullable=False)
+    description = Column(Text)
+    question_count = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    subject = relationship("Subject")
+    items = relationship(
+        "PresetExamQuestion",
+        back_populates="preset",
+        cascade="all, delete-orphan",
+        order_by="PresetExamQuestion.position",
+    )
+
+
+class PresetExamQuestion(Base):
+    __tablename__ = "preset_exam_questions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    preset_id = Column(Integer, ForeignKey("preset_exams.id"), nullable=False)
+    question_id = Column(Integer, ForeignKey("questions.id"), nullable=False)
+    position = Column(Integer, nullable=False, default=0)
+
+    preset = relationship("PresetExam", back_populates="items")
+    question = relationship("Question")
+
+    __table_args__ = (
+        UniqueConstraint("preset_id", "question_id", name="uq_preset_question"),
+    )
 
 
 class Question(Base):

@@ -211,13 +211,16 @@ async def generate_exam(
 
     if exam_index <= 1:
         # ---------------------------------------------------------------
-        # R1: Khởi tạo – exam #1 blueprint: safe difficulty b ∈ [-1.5,-0.5]
-        # with high discrimination a > 1.2, Bloom distribution and topic
-        # coverage; Fisher information at theta = 0 picks within each slot.
+        # R1: Khởi tạo – exam #1 blueprint: safe difficulty band relative
+        # to the starting theta (0 for cold start, warm-start prior when
+        # the learner is already known), high discrimination a > 1.2,
+        # Bloom distribution and topic coverage; Fisher picks per slot.
         # ---------------------------------------------------------------
-        band = [q for q in pool if -1.5 <= q["difficulty_b"] <= -0.5 and q["discrimination_a"] > 1.2]
+        theta0 = float(theta) if sem < 999 or theta else 0.0
+        lo, hi = theta0 - 1.5, theta0 - 0.5
+        band = [q for q in pool if lo <= q["difficulty_b"] <= hi and q["discrimination_a"] > 1.2]
         if len(band) < n:
-            band = [q for q in pool if -1.5 <= q["difficulty_b"] <= -0.5]
+            band = [q for q in pool if lo <= q["difficulty_b"] <= hi]
         if len(band) < n:
             band = pool
         if band:
@@ -225,13 +228,16 @@ async def generate_exam(
                 applied_rules,
                 rule_events,
                 "R1",
-                "Đề #1: khởi tạo với b ∈ [-1.5, -0.5], ưu tiên a > 1.2, phủ topic, Fisher tại θ=0",
+                (
+                    f"Đề #1: khởi tạo với b ∈ [{lo:.1f}, {hi:.1f}] quanh θ₀={theta0:.2f}, "
+                    "ưu tiên a > 1.2, phủ topic, chọn theo Fisher"
+                ),
             )
         selected = _fill_slots_round_robin(
             band,
             topic_order,
             n,
-            pick_fn=lambda cands, _i: select_best_by_fisher(cands, current_theta=0.0),
+            pick_fn=lambda cands, _i: select_best_by_fisher(cands, current_theta=theta0),
             bloom_quotas=_bloom_quotas(n, chain),
         )
     else:

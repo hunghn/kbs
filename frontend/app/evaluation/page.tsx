@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import {
   authAPI, knowledgeAPI, evaluationAPI,
-  type SubjectSummary, type ConvergenceReportInfo,
+  type SubjectSummary, type ConvergenceReportInfo, type CalibrationRunInfo,
 } from "@/lib/api";
 import { Navbar } from "@/components/layout/navbar";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -85,6 +85,9 @@ export default function EvaluationPage() {
   const [running, setRunning] = useState(false);
   const [report, setReport] = useState<ConvergenceReportInfo | null>(null);
   const [error, setError] = useState("");
+  const [calibrating, setCalibrating] = useState(false);
+  const [calibration, setCalibration] = useState<CalibrationRunInfo | null>(null);
+  const [calibMinN, setCalibMinN] = useState(30);
 
   const checkAuth = useCallback(async () => {
     try {
@@ -119,6 +122,22 @@ export default function EvaluationPage() {
       setError(err instanceof Error ? err.message : "Có lỗi xảy ra");
     }
     setRunning(false);
+  };
+
+  const runCalibration = async () => {
+    if (!subjectId) return;
+    setCalibrating(true);
+    try {
+      const rep = await evaluationAPI.calibrate({
+        subject_id: subjectId,
+        min_responses: calibMinN,
+        apply: true,
+      });
+      setCalibration(rep);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Có lỗi xảy ra");
+    }
+    setCalibrating(false);
   };
 
   if (!user) return null;
@@ -297,6 +316,76 @@ export default function EvaluationPage() {
             </Card>
           </>
         )}
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Hiệu chuẩn tham số IRT từ dữ liệu thật</CardTitle>
+            <CardDescription>
+              Ước lượng lại độ khó b của các câu hỏi đã có đủ lượt trả lời (MLE 3PL trên log
+              trả lời, dùng θ của người làm) và trộn thận trọng theo lượng bằng chứng —
+              hệ thống tự tinh chỉnh cơ sở tri thức của chính nó
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="flex items-end gap-3">
+              <div className="space-y-1">
+                <Label className="text-xs">Số lượt trả lời tối thiểu</Label>
+                <Input type="number" min={5} max={500} value={calibMinN} className="w-40"
+                  onChange={(e) => setCalibMinN(parseInt(e.target.value) || 30)} />
+              </div>
+              <Button onClick={runCalibration} disabled={calibrating || !subjectId}>
+                {calibrating ? "Đang hiệu chuẩn..." : "Chạy hiệu chuẩn"}
+              </Button>
+            </div>
+
+            {calibration && (
+              <>
+                <p className="text-sm text-muted-foreground">
+                  {calibration.items_with_responses} câu có dữ liệu ·{" "}
+                  <b className="text-foreground">{calibration.items_calibrated} câu được hiệu chuẩn</b> ·{" "}
+                  {calibration.items_below_threshold} câu chưa đủ {calibration.min_responses} lượt
+                  {calibration.mean_abs_shift != null && (
+                    <> · dịch chuyển b trung bình: <b className="text-foreground">{calibration.mean_abs_shift}</b></>
+                  )}
+                </p>
+                {calibration.items.length > 0 && (
+                  <div className="overflow-x-auto max-h-64 overflow-y-auto">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="border-b text-left text-muted-foreground sticky top-0 bg-background">
+                          <th className="py-1.5 pr-3">Câu</th>
+                          <th className="py-1.5 pr-3">Lượt</th>
+                          <th className="py-1.5 pr-3">Đúng thực tế</th>
+                          <th className="py-1.5 pr-3">b cũ</th>
+                          <th className="py-1.5 pr-3">b MLE</th>
+                          <th className="py-1.5 pr-3">Trọng số</th>
+                          <th className="py-1.5 pr-3">b mới</th>
+                          <th className="py-1.5">Δb</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {calibration.items.map((it) => (
+                          <tr key={it.question_id} className="border-b last:border-0">
+                            <td className="py-1.5 pr-3 font-mono">{it.external_id}</td>
+                            <td className="py-1.5 pr-3">{it.n_responses}</td>
+                            <td className="py-1.5 pr-3">{Math.round(it.observed_accuracy * 100)}%</td>
+                            <td className="py-1.5 pr-3">{it.b_old.toFixed(2)}</td>
+                            <td className="py-1.5 pr-3">{it.b_mle.toFixed(2)}</td>
+                            <td className="py-1.5 pr-3">{it.blend_weight}</td>
+                            <td className="py-1.5 pr-3 font-semibold">{it.b_new.toFixed(2)}</td>
+                            <td className={`py-1.5 ${Math.abs(it.shift) >= 0.3 ? "text-orange-600 font-semibold" : ""}`}>
+                              {it.shift > 0 ? "+" : ""}{it.shift.toFixed(2)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </>
+            )}
+          </CardContent>
+        </Card>
       </main>
     </div>
   );

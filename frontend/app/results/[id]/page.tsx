@@ -324,6 +324,34 @@ export default function ResultsPage() {
                 </div>
               )}
 
+              {/* Misconception detection */}
+              {explanation.misconceptions && explanation.misconceptions.length > 0 && (
+                <div>
+                  <p className="text-sm font-medium mb-2">⚠️ Ngộ nhận phổ biến được phát hiện</p>
+                  <div className="space-y-2">
+                    {explanation.misconceptions.map((m) => (
+                      <div key={m.question_id} className="rounded-lg border border-orange-300 bg-orange-50/60 p-3 text-xs">
+                        <p>
+                          <span className="font-mono font-semibold">{m.external_id}</span>
+                          <span className="text-muted-foreground"> · {m.topic_name}</span>
+                        </p>
+                        <p className="mt-1">
+                          Bạn chọn <b>{m.chosen_option}</b> — giống{" "}
+                          <b>{Math.round(m.share_of_wrong * 100)}%</b> người làm sai câu này
+                          ({m.n_wrong} lượt sai). Đây là phương án gây nhầm lẫn điển hình,
+                          không phải lỗi ngẫu nhiên — nên xem lại khái niệm liên quan.
+                        </p>
+                        {m.chosen_text && (
+                          <p className="mt-1 text-muted-foreground line-clamp-2">
+                            Phương án đã chọn: “{m.chosen_text}”
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Bloom + difficulty tables */}
               <div className="grid gap-4 md:grid-cols-2">
                 <div>

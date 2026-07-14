@@ -34,6 +34,8 @@ class ExamChain(Base):
     strategy = Column(String(10), nullable=False, default="rules")  # rules | rl
     rl_state = Column(String(40))   # pending bandit decision awaiting reward
     rl_action = Column(Integer)
+    # Warm-start: informative EAP prior from UserAbility + DKT (NULL = cold start)
+    prior_theta = Column(Numeric(6, 3))
     current_theta = Column(Numeric(6, 3), default=0)
     current_sem = Column(Numeric(6, 3), default=999)
     exams_generated = Column(Integer, nullable=False, default=0)

@@ -7,6 +7,8 @@ without importing the whole router module.
 from datetime import datetime, timezone
 import math
 
+from app.config import get_settings
+
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -39,6 +41,23 @@ def safe_numeric(
 
     parsed = min(max(parsed, min_value), max_value)
     return round(parsed, ndigits)
+
+
+def apply_forgetting(theta: float, last_practiced_at) -> tuple[float, int]:
+    """Ebbinghaus-style decay: effective theta drops the longer a topic sits
+    unreviewed. Returns (theta_effective, days_idle)."""
+    settings = get_settings()
+    lam = float(settings.FORGETTING_LAMBDA)
+    if last_practiced_at is None or lam <= 0:
+        return float(theta), 0
+
+    now = datetime.now(timezone.utc)
+    last = last_practiced_at
+    if last.tzinfo is None:
+        last = last.replace(tzinfo=timezone.utc)
+    days = max(0.0, (now - last).total_seconds() / 86400.0)
+    theta_eff = float(theta) - lam * math.log1p(days)
+    return round(theta_eff, 3), int(days)
 
 
 def normalize_text(value: str) -> str:
@@ -307,11 +326,19 @@ def question_to_out(q: Question) -> QuestionOut:
     )
 
 
-def theta_history_from_scoring_data(scoring_data: list[dict]) -> list[float]:
-    """Build theta timeline step-by-step, including R7 damping behavior."""
-    history = [0.0]
+def theta_history_from_scoring_data(
+    scoring_data: list[dict],
+    prior_mean: float = 0.0,
+    prior_sd: float = 1.0,
+) -> list[float]:
+    """Build theta timeline step-by-step, including R7 damping behavior.
+
+    prior_mean/prior_sd let a warm-started chain (DKT/UserAbility prior)
+    keep the same informative prior across the whole timeline.
+    """
+    history = [round(float(prior_mean), 3)]
     rolling_data: list[dict] = []
-    current_theta = 0.0
+    current_theta = float(prior_mean)
 
     for row in scoring_data:
         rolling_data.append(
@@ -322,7 +349,9 @@ def theta_history_from_scoring_data(scoring_data: list[dict]) -> list[float]:
                 "is_correct": bool(row["is_correct"]),
             }
         )
-        ability_result = estimate_ability_3pl(rolling_data)
+        ability_result = estimate_ability_3pl(
+            rolling_data, prior_mean=prior_mean, prior_sd=prior_sd
+        )
         raw_theta = ability_result["theta_map"]
         if bool(row.get("guessing_flag")):
             # Keep timeline consistent with runtime theta damping under R7.

@@ -308,7 +308,9 @@ export function AbilityGraph() {
 
                 {/* Nodes */}
                 {Array.from(layout.positioned.values()).map(({ node, x, y }) => {
-                  const fill = node.mastery ? MASTERY_FILL[node.mastery] || "#cbd5e1" : "#cbd5e1";
+                  // Color by decayed mastery (forgetting curve) when available
+                  const masteryForColor = node.mastery_effective || node.mastery;
+                  const fill = masteryForColor ? MASTERY_FILL[masteryForColor] || "#cbd5e1" : "#cbd5e1";
                   const hasData = node.attempted > 0;
                   const isSelected = selected?.id === node.id;
                   const related =
@@ -361,6 +363,13 @@ export function AbilityGraph() {
                 <span>Đã làm: <b className="text-foreground">{selected.correct}/{selected.attempted}</b></span>
                 <span>Ngân hàng: <b className="text-foreground">{selected.question_count} câu</b></span>
               </div>
+              {selected.theta_effective != null && selected.theta != null
+                && selected.theta_effective < selected.theta && (
+                <p className="mt-1 text-xs text-orange-600">
+                  ⏳ Sau {selected.days_since_practice} ngày không ôn, θ hiệu dụng còn{" "}
+                  <b>{selected.theta_effective.toFixed(2)}</b> (đường cong quên Ebbinghaus)
+                </p>
+              )}
               {(() => {
                 if (!graph) return null;
                 const nameOf = (id: number) => {

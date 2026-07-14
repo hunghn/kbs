@@ -160,6 +160,16 @@ export const evaluationAPI = {
     if (params.include_rl) query.set("include_rl", "true");
     return fetchAPI<ConvergenceReportInfo>(`/quiz/evaluation/convergence?${query.toString()}`);
   },
+
+  calibrate: (params: { subject_id?: number; min_responses?: number; apply?: boolean }) => {
+    const query = new URLSearchParams();
+    if (params.subject_id) query.set("subject_id", String(params.subject_id));
+    if (params.min_responses) query.set("min_responses", String(params.min_responses));
+    if (params.apply !== undefined) query.set("apply", String(params.apply));
+    return fetchAPI<CalibrationRunInfo>(`/quiz/calibration/run?${query.toString()}`, {
+      method: "POST",
+    });
+  },
 };
 
 // Users
@@ -284,6 +294,9 @@ export interface AbilityGraphNode {
   question_count: number;
   theta?: number | null;
   mastery?: string | null;
+  theta_effective?: number | null;
+  mastery_effective?: string | null;
+  days_since_practice?: number;
   attempted: number;
   correct: number;
   skills: SkillInfo[];
@@ -502,7 +515,38 @@ export interface ExplanationInfo {
     correct: number;
     accuracy: number;
   }[];
+  misconceptions: {
+    question_id: number;
+    external_id: string;
+    topic_name: string;
+    chosen_option: string;
+    chosen_text: string;
+    correct_option: string;
+    share_of_wrong: number;
+    n_wrong: number;
+  }[];
   narrative: string[];
+}
+
+export interface CalibrationRunInfo {
+  subject_id?: number | null;
+  min_responses: number;
+  applied: boolean;
+  items_with_responses: number;
+  items_calibrated: number;
+  items_below_threshold: number;
+  mean_abs_shift?: number | null;
+  items: {
+    question_id: number;
+    external_id: string;
+    n_responses: number;
+    observed_accuracy: number;
+    b_old: number;
+    b_mle: number;
+    blend_weight: number;
+    b_new: number;
+    shift: number;
+  }[];
 }
 
 export interface ConvergenceStrategyInfo {

@@ -384,7 +384,25 @@ trên đồ thị tiên quyết (TopicPrerequisite + KnowledgeGraph), ưu tiên 
 các topic yếu, loại topic đã thành thạo; hiển thị dạng timeline trong trang tổng kết
 chuỗi đề.
 
-### 7. Đánh giá toán học độ hội tụ năng lực
+### 7. Vòng tự tinh chỉnh tri thức (nâng cấp thông minh)
+
+Bốn cơ chế làm hệ thống tự cải thiện tri thức và mô hình người học của chính nó:
+
+- **Hiệu chuẩn IRT từ dữ liệu thật** (`app/engine/calibration.py`,
+  `POST /api/quiz/calibration/run`): khi một câu đủ lượt trả lời, độ khó `b` được
+  ước lượng lại bằng MLE 3PL trên log trả lời (dùng θ của từng người làm) và trộn
+  thận trọng theo lượng bằng chứng — chạy từ trang Đánh giá hệ thống.
+- **Đường cong quên Ebbinghaus** (`FORGETTING_LAMBDA`): θ hiệu dụng của mỗi topic
+  suy giảm theo số ngày không ôn (`θ_eff = θ − λ·ln(1+ngày)`); đồ thị năng lực tô màu
+  theo mastery đã suy giảm, lộ trình học tự đẩy topic lâu chưa ôn lên trước.
+- **Phát hiện ngộ nhận (distractor analysis)**: nếu phương án sai người dùng chọn
+  trùng với phương án sai phổ biến nhất của câu đó (≥50% lượt sai), XAI đánh dấu
+  đây là ngộ nhận điển hình thay vì lỗi ngẫu nhiên.
+- **Warm-start prior (R0)**: người học cũ không bắt đầu từ θ=0 — prior của Bayesian
+  EAP được khởi tạo từ trung bình UserAbility và dự đoán DKT (`exam_chains.prior_theta`),
+  đề #1 sinh quanh θ₀ đó và toàn chuỗi dùng prior chặt hơn (sd 0.8); ghi log luật `R0`.
+
+### 8. Đánh giá toán học độ hội tụ năng lực
 
 Mô-đun mô phỏng `backend/app/evaluation/convergence.py` (CLI:
 `python -m app.evaluation.convergence --subject 2`) giả lập sinh viên có θ thật trải đều

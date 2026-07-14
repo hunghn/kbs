@@ -167,11 +167,20 @@ async def get_learning_path(
     )
     progress = {p.topic_id: p for p in progress_rows.scalars().all()}
 
+    from app.engine.irt import classify_mastery
+    from app.services.adaptive_shared import apply_forgetting
+
+    decay_info: dict[int, tuple[float, int]] = {}
+
     def status_of(tid: int) -> str:
         p = progress.get(tid)
         if not p or not (p.questions_attempted or 0):
             return "not_started"
-        level = (p.mastery_level or "").lower()
+        # Forgetting curve: mastery is judged on the decayed (effective) theta,
+        # so long-unreviewed topics drift back into the learning path.
+        theta_eff, days = apply_forgetting(float(p.theta_estimate or 0.0), p.updated_at)
+        decay_info[tid] = (theta_eff, days)
+        level = classify_mastery(theta_eff)
         if level in ("proficient", "master"):
             return "mastered"
         if level == "developing":
@@ -212,7 +221,14 @@ async def get_learning_path(
         ]
 
         s = status[current]
-        if s == "weak":
+        decayed = decay_info.get(current)
+        stored_level = (p.mastery_level or "").lower() if p else ""
+        if s == "weak" and stored_level in ("developing", "proficient", "master") and decayed:
+            reason = (
+                f"Năng lực suy giảm sau {decayed[1]} ngày không ôn tập "
+                f"(θ hiệu dụng {decayed[0]:.2f}) — nên ôn lại"
+            )
+        elif s == "weak":
             reason = "Tỷ lệ đúng thấp ở các bài thi gần đây — cần củng cố lại"
         elif current in prereq_of_weak:
             dependents = [topic_info[b][0].name for a, b in edges if a == current and b in weak_topics]

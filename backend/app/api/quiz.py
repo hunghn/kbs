@@ -2,7 +2,7 @@
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 from app.database import get_db
 from app.api.auth import get_current_user
@@ -277,6 +277,27 @@ async def train_dkt_model(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/calibration/run")
+async def run_item_calibration(
+    subject_id: int | None = None,
+    min_responses: int | None = None,
+    apply: bool = True,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Hiệu chuẩn lại tham số độ khó b từ log trả lời thật (MLE 3PL, blend
+    thận trọng theo lượng bằng chứng); apply=false để xem trước không ghi."""
+    _ = user
+    from app.engine.calibration import run_calibration
+
+    return await run_calibration(
+        db,
+        subject_id=subject_id,
+        min_responses=max(5, min(int(min_responses), 500)) if min_responses else None,
+        apply=apply,
+    )
 
 
 @router.get("/evaluation/difficulty-calibration", response_model=CalibrationReport)
@@ -907,6 +928,67 @@ async def get_session_explanation(
                 f"({worst_skill['correct']}/{worst_skill['total']} đúng)."
             )
 
+    # ---------- Misconception detection (distractor analysis) ----------
+    # If the user's wrong choice coincides with the option most learners
+    # also wrongly pick on that question, it likely marks a shared
+    # misconception rather than a random slip.
+    wrong_responses = [
+        r for r in responses if r.user_answer and not r.is_correct
+    ]
+    misconceptions: list[dict] = []
+    if wrong_responses:
+        wrong_qids = [r.question_id for r in wrong_responses]
+        dist_rows = await db.execute(
+            select(
+                QuizResponse.question_id,
+                QuizResponse.user_answer,
+                func.count(QuizResponse.id),
+            )
+            .where(QuizResponse.question_id.in_(wrong_qids))
+            .where(QuizResponse.user_answer.isnot(None))
+            .group_by(QuizResponse.question_id, QuizResponse.user_answer)
+        )
+        counts: dict[int, dict[str, int]] = {}
+        for qid, ans, cnt in dist_rows:
+            counts.setdefault(qid, {})[(ans or "").upper()] = int(cnt)
+
+        for resp in wrong_responses:
+            q = resp.question
+            correct = q.correct_answer.upper()
+            wrong_dist = {
+                opt: n for opt, n in counts.get(resp.question_id, {}).items()
+                if opt != correct
+            }
+            total_wrong = sum(wrong_dist.values())
+            if total_wrong < 3 or not wrong_dist:
+                continue
+            mode_opt, mode_n = max(wrong_dist.items(), key=lambda kv: kv[1])
+            share = mode_n / total_wrong
+            if resp.user_answer.upper() == mode_opt and share >= 0.5:
+                option_text = getattr(q, f"option_{mode_opt.lower()}", "")
+                misconceptions.append(
+                    {
+                        "question_id": q.id,
+                        "external_id": q.external_id,
+                        "topic_name": q.topic.name if q.topic else "",
+                        "chosen_option": mode_opt,
+                        "chosen_text": option_text,
+                        "correct_option": correct,
+                        "share_of_wrong": round(share, 2),
+                        "n_wrong": total_wrong,
+                    }
+                )
+
+    if misconceptions:
+        m = misconceptions[0]
+        narrative.append(
+            f"Phát hiện ngộ nhận phổ biến: ở câu {m['external_id']} bạn chọn phương án "
+            f"{m['chosen_option']} giống {m['share_of_wrong'] * 100:.0f}% người làm sai câu này "
+            f"— đây là phương án gây nhầm lẫn điển hình, nên xem lại khái niệm liên quan "
+            f"trong chủ đề \"{m['topic_name']}\"."
+            + (f" (Tổng cộng {len(misconceptions)} câu có dấu hiệu ngộ nhận.)" if len(misconceptions) > 1 else "")
+        )
+
     guessed = [q for q in questions_detail if q["guessing_flag"]]
     if guessed:
         narrative.append(
@@ -941,6 +1023,7 @@ async def get_session_explanation(
         "bloom_stats": bloom_stats,
         "difficulty_stats": difficulty_stats,
         "skill_stats": skill_stats,
+        "misconceptions": misconceptions,
         "narrative": narrative,
     }
 

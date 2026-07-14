@@ -26,6 +26,15 @@ class Settings(BaseSettings):
     # R9 trigger: generate LLM item when no bank item is within this |b - b_target| gap
     ADAPTIVE_MIN_B_GAP_LLM: float = 0.45
 
+    # Forgetting curve: effective theta = theta - lambda * ln(1 + days_idle).
+    # Set to 0 to disable decay.
+    FORGETTING_LAMBDA: float = 0.08
+
+    # Item calibration: minimum answered responses before re-estimating b,
+    # and the response count at which the new estimate gets full blend weight.
+    CALIBRATION_MIN_RESPONSES: int = 30
+    CALIBRATION_FULL_WEIGHT_AT: int = 100
+
 @lru_cache()
 def get_settings():
     return Settings()

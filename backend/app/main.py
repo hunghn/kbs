@@ -77,6 +77,12 @@ async def lifespan(app: FastAPI):
                 "ADD COLUMN IF NOT EXISTS rl_action INTEGER"
             )
         )
+        await conn.execute(
+            text(
+                "ALTER TABLE IF EXISTS exam_chains "
+                "ADD COLUMN IF NOT EXISTS prior_theta NUMERIC(6,3)"
+            )
+        )
 
     # Seed the Skill ontology layer and preset exams (both idempotent)
     from app.database import async_session

@@ -148,9 +148,17 @@ async def get_ability_graph(
             {"id": s.id, "name": s.name, "kind": s.kind}
         )
 
+    from app.engine.irt import classify_mastery
+    from app.services.adaptive_shared import apply_forgetting
+
     nodes = []
     for t, mt in rows:
         p = progress.get(t.id)
+        theta = float(p.theta_estimate) if p and p.theta_estimate is not None else None
+        theta_eff, days_idle, mastery_eff = None, 0, None
+        if p and theta is not None and (p.questions_attempted or 0) > 0:
+            theta_eff, days_idle = apply_forgetting(theta, p.updated_at)
+            mastery_eff = classify_mastery(theta_eff)
         nodes.append(
             {
                 "id": t.id,
@@ -161,8 +169,12 @@ async def get_ability_graph(
                 "major_topic_order": mt.order_index or 0,
                 "order_index": t.order_index or 0,
                 "question_count": int(count_map.get(t.id, 0)),
-                "theta": float(p.theta_estimate) if p and p.theta_estimate is not None else None,
+                "theta": theta,
                 "mastery": p.mastery_level if p else None,
+                # Forgetting curve: ability decayed by idle time since last practice
+                "theta_effective": theta_eff,
+                "mastery_effective": mastery_eff,
+                "days_since_practice": days_idle,
                 "attempted": int(p.questions_attempted or 0) if p else 0,
                 "correct": int(p.questions_correct or 0) if p else 0,
                 "skills": sorted(skills_map.get(t.id, []), key=lambda s: s["kind"]),

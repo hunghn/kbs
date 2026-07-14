@@ -199,6 +199,40 @@ async def start_adaptive_test(
     if not subject:
         raise HTTPException(status_code=404, detail="Subject not found")
 
+    # ---------- Warm-start prior (R0) ----------
+    # A returning learner shouldn't restart from theta = 0: combine the
+    # persisted subject ability with the DKT prediction into an
+    # informative EAP prior for the whole chain.
+    import math as _math
+
+    prior_candidates: list[tuple[str, float]] = []
+    ability_row = await db.execute(
+        select(UserAbility).where(
+            UserAbility.user_id == user.id,
+            UserAbility.subject_id == config.subject_id,
+        )
+    )
+    user_ability = ability_row.scalar_one_or_none()
+    if user_ability and (user_ability.answered_count or 0) > 0:
+        prior_candidates.append(("UserAbility", float(user_ability.theta_estimate or 0.0)))
+
+    try:
+        from app.services.dkt_service import predict_user_mastery
+
+        dkt = await predict_user_mastery(db, config.subject_id, user.id)
+        if dkt["history_length"] > 0:
+            probs = [p["p_correct_next"] for p in dkt["predictions"]]
+            p_mean = min(max(sum(probs) / len(probs), 0.05), 0.95)
+            prior_candidates.append(("DKT", _math.log(p_mean / (1 - p_mean))))
+    except FileNotFoundError:
+        pass
+
+    prior_theta = None
+    if prior_candidates:
+        prior_theta = round(
+            max(-2.5, min(2.5, sum(v for _s, v in prior_candidates) / len(prior_candidates))), 3
+        )
+
     chain = ExamChain(
         user_id=user.id,
         subject_id=config.subject_id,
@@ -209,7 +243,8 @@ async def start_adaptive_test(
         application_pct=config.application_pct,
         status="active",
         strategy="rl" if config.strategy == "rl" else "rules",
-        current_theta=0,
+        prior_theta=prior_theta,
+        current_theta=prior_theta or 0,
         current_sem=999,
     )
     db.add(chain)
@@ -221,7 +256,7 @@ async def start_adaptive_test(
         chain=chain,
         user_id=user.id,
         exam_index=1,
-        theta=0.0,
+        theta=float(prior_theta or 0.0),
         sem=999.0,
         chain_scoring_data=[],
         prev_exam_scoring_data=[],
@@ -232,6 +267,20 @@ async def start_adaptive_test(
     if not questions:
         await db.rollback()
         raise HTTPException(status_code=404, detail="No questions found for this subject")
+
+    if prior_theta is not None:
+        sources = " + ".join(s for s, _v in prior_candidates)
+        rule_events.insert(
+            0,
+            {
+                "rule_code": "R0",
+                "reason": (
+                    f"Warm-start: khởi tạo θ₀ = {prior_theta:.2f} từ {sources} "
+                    "(prior cho Bayesian EAP thay vì bắt đầu từ 0)"
+                ),
+                "question_id": None,
+            },
+        )
 
     session = await _create_exam_session(db, chain, user, 1, questions, rule_events)
     await db.commit()
@@ -306,11 +355,14 @@ async def submit_exam(
     exam_score = score_quiz(exam_scoring_data)
 
     # Cumulative ability over the whole chain (R7 damping preserved).
+    # A warm-started chain keeps its informative prior (tighter sd).
+    prior_mean = float(chain.prior_theta) if chain.prior_theta is not None else 0.0
+    prior_sd = 0.8 if chain.prior_theta is not None else 1.0
     chain_responses = await _completed_chain_responses(db, chain.id, include_session_id=session.id)
     chain_scoring_data = build_scoring_data(chain_responses)
-    theta_history = theta_history_from_scoring_data(chain_scoring_data)
-    theta = theta_history[-1] if theta_history else 0.0
-    ability = estimate_ability_3pl(chain_scoring_data)
+    theta_history = theta_history_from_scoring_data(chain_scoring_data, prior_mean, prior_sd)
+    theta = theta_history[-1] if theta_history else prior_mean
+    ability = estimate_ability_3pl(chain_scoring_data, prior_mean=prior_mean, prior_sd=prior_sd)
     sem = safe_numeric(ability["posterior_sd"], default=999.0, min_value=0.0, max_value=999.0)
 
     if not already_completed:
@@ -650,9 +702,11 @@ async def _chain_summary(db: AsyncSession, chain: ExamChain) -> ChainSummaryOut:
         for s in sessions
     ]
 
+    prior_mean = float(chain.prior_theta) if chain.prior_theta is not None else 0.0
+    prior_sd = 0.8 if chain.prior_theta is not None else 1.0
     chain_responses = await _completed_chain_responses(db, chain.id)
     chain_scoring_data = build_scoring_data(chain_responses)
-    theta_history = theta_history_from_scoring_data(chain_scoring_data)
+    theta_history = theta_history_from_scoring_data(chain_scoring_data, prior_mean, prior_sd)
     theta = safe_numeric(chain.current_theta, default=0.0, min_value=-999.0, max_value=999.0)
     sem = safe_numeric(chain.current_sem, default=999.0, min_value=0.0, max_value=999.0)
 

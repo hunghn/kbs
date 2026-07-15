@@ -7,6 +7,7 @@ import {
   knowledgeAPI,
   adaptiveAPI,
   presetAPI,
+  practiceAPI,
   quizAPI,
   type SubjectSummary,
   type AdaptiveExamInfo,
@@ -174,6 +175,33 @@ function QuizContent() {
     setDraftAnswers(answers);
     if (exam) persistChain(exam, answers);
   };
+
+  // "Luyện ngay" from the learning path: /quiz?practice_topic=ID
+  const practiceTopic = searchParams.get("practice_topic");
+  useEffect(() => {
+    if (!user || !practiceTopic) return;
+    (async () => {
+      try {
+        const started = await practiceAPI.start(parseInt(practiceTopic), 5);
+        setPresetExam({
+          chain_id: 0,
+          session_id: started.session_id,
+          exam_index: 1,
+          max_exams: 1,
+          questions_per_exam: started.questions.length,
+          questions: started.questions,
+          theta: started.anchor_theta,
+          sem: 999,
+          applied_rules: [],
+          strategy: "practice",
+        });
+        setPhase("preset-exam");
+      } catch {
+        setPhase("setup");
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, practiceTopic]);
 
   const handleStartPreset = async (presetId: number) => {
     const started = await presetAPI.start(presetId);

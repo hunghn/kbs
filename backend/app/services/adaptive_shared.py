@@ -90,6 +90,64 @@ def question_signature_from_model(q: Question) -> str:
     )
 
 
+def matching_sides(question: Question) -> tuple[list[str], list[str]]:
+    """Left column + deterministically shuffled right column for matching items."""
+    import json
+    import random as _random
+
+    try:
+        pairs = json.loads(question.matching_pairs or "[]")
+    except (ValueError, TypeError):
+        pairs = []
+    left = [str(p.get("left", "")) for p in pairs]
+    right = [str(p.get("right", "")) for p in pairs]
+    rng = _random.Random(question.id * 7919)
+    rng.shuffle(right)
+    return left, right
+
+
+def grade_answer(question: Question, submitted: str) -> tuple[bool, str | None, str | None]:
+    """Grade one answer by question format.
+
+    Returns (is_correct, letter_for_user_answer_col, full_answer_text).
+    - mcq / true_false: letter comparison
+    - short_answer   : normalized match against reference aliases ("a|b|c")
+    - matching       : submitted JSON {left: right} must match every pair
+    """
+    import json
+
+    fmt = (question.question_format or "mcq").lower()
+    raw = (submitted or "").strip()
+
+    if fmt in ("mcq", "true_false"):
+        letter = raw.upper()[:1]
+        return letter == (question.correct_answer or "").upper(), letter or None, None
+
+    if fmt == "short_answer":
+        aliases = [
+            normalize_text(x) for x in (question.answer_text or "").split("|") if x.strip()
+        ]
+        ok = bool(aliases) and normalize_text(raw) in aliases
+        return ok, None, raw[:2000] or None
+
+    if fmt == "matching":
+        try:
+            submitted_map = json.loads(raw)
+        except (ValueError, TypeError):
+            return False, None, raw[:2000] or None
+        try:
+            pairs = json.loads(question.matching_pairs or "[]")
+        except (ValueError, TypeError):
+            pairs = []
+        expected = {str(p.get("left", "")): str(p.get("right", "")) for p in pairs}
+        ok = bool(expected) and isinstance(submitted_map, dict) and all(
+            str(submitted_map.get(l, "")) == r for l, r in expected.items()
+        )
+        return ok, None, raw[:2000] or None
+
+    return False, None, raw[:2000] or None
+
+
 def normalize_question_type(qtype: str | None) -> str:
     text = (qtype or "").strip().lower()
     if "nhận" in text or "nhan" in text:
@@ -310,6 +368,8 @@ def append_rule(
 
 
 def question_to_out(q: Question) -> QuestionOut:
+    fmt = (q.question_format or "mcq").lower()
+    left, right = matching_sides(q) if fmt == "matching" else ([], [])
     return QuestionOut(
         id=q.id,
         external_id=q.external_id,
@@ -319,6 +379,9 @@ def question_to_out(q: Question) -> QuestionOut:
         option_c=q.option_c,
         option_d=q.option_d,
         question_type=q.question_type,
+        question_format=fmt,
+        matching_left=left,
+        matching_right=right,
         time_limit_seconds=q.time_limit_seconds,
         time_display=q.time_display,
         topic_name=q.topic.name if q.topic else "",

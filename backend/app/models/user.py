@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Numeric, Boolean, ForeignKey, DateTime, UniqueConstraint
+from sqlalchemy import Column, Integer, String, Text, Numeric, Boolean, ForeignKey, DateTime, UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
@@ -75,6 +75,8 @@ class QuizResponse(Base):
     session_id = Column(Integer, ForeignKey("quiz_sessions.id"), nullable=False)
     question_id = Column(Integer, ForeignKey("questions.id"), nullable=False)
     user_answer = Column(String(1))
+    # Full answer for non-MCQ formats (short answer text / matching JSON)
+    answer_text = Column(Text)
     is_correct = Column(Boolean, nullable=False)
     guessing_flag = Column(Boolean, nullable=False, default=False)
     time_spent_seconds = Column(Integer)

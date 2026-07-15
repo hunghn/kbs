@@ -81,4 +81,8 @@ async def get_effective_llm_runtime_config(db: AsyncSession) -> dict:
         "llm_model": row.llm_model,
         "llm_temperature": float(row.llm_temperature),
         "llm_timeout_seconds": int(row.llm_timeout_seconds),
+        "gemini_enabled": bool(getattr(row, "gemini_enabled", False)),
+        "gemini_api_key": getattr(row, "gemini_api_key", "") or "",
+        "has_gemini_api_key": bool(getattr(row, "gemini_api_key", "")),
+        "gemini_model": getattr(row, "gemini_model", "") or "gemini-2.0-flash",
     }

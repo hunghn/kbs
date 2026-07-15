@@ -422,7 +422,30 @@ Hệ thống được tổ chức thành 9 tác tử chuyên biệt trao đổi 
 Mức độ hoạt động của từng tác tử đo trực tiếp từ `inference_rule_logs` (mỗi lần một
 luật kích hoạt là một quyết định của tác tử sở hữu luật đó) và hiển thị trên sơ đồ.
 
-### 9. Đánh giá toán học độ hội tụ năng lực
+### 9. Đa dạng dạng câu hỏi và Trang tạo đề (Exam Builder)
+
+Ngân hàng hỗ trợ 4 dạng câu (`questions.question_format`): **trắc nghiệm 4 phương án,
+Đúng/Sai, trả lời ngắn** (đáp án chuẩn hóa + alias `"4|bốn"`), **ghép đôi kéo-thả**
+(cặp trái-phải, đáp án không lộ ra client — cột phải được xáo trộn). Chấm điểm theo
+dạng ở cả hai luồng nộp bài (`grade_answer` trong `adaptive_shared.py`).
+
+Trang **Tạo đề thi** (`/questions/builder`, nút trong Quản lý câu hỏi) cho giáo viên:
+
+1. Chọn miền tri thức (môn/topic), số câu từng dạng, phân bổ Bloom, neo độ khó
+   (chỉ định `b` hoặc **theo năng lực trung bình của người học** — follow kiến thức
+   người dùng).
+2. Dựng đề nháp: ưu tiên ngân hàng, **LLM sinh bù** phần thiếu (`POST /api/quiz/presets/build`).
+3. **Kiểm soát trong quá trình sinh**: mỗi câu LLM sinh ra bị cách ly (`is_archived`)
+   và kèm báo cáo thẩm định: self-check (LLM tự giải lại, ước lượng b) + **Gemini
+   cross-validator** (Google Gemini giải độc lập, chỉ đồng thuận mới đạt — bật trong
+   trang Cấu hình). Giáo viên duyệt Giữ/Loại/Sinh lại từng câu.
+4. Lưu thành đề có sẵn — câu LLM được giữ mới chính thức vào ngân hàng.
+
+**Lộ trình cải thiện**: mỗi bước trong Lộ trình học có nút "Luyện ngay" —
+`POST /api/quiz/practice/start` sinh đề mini 5 câu của đúng topic đó, chọn câu quanh
+θ hiệu dụng (đã áp đường cong quên) của người học.
+
+### 10. Đánh giá toán học độ hội tụ năng lực
 
 Mô-đun mô phỏng `backend/app/evaluation/convergence.py` (CLI:
 `python -m app.evaluation.convergence --subject 2`) giả lập sinh viên có θ thật trải đều

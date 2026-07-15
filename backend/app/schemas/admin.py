@@ -10,6 +10,9 @@ class LLMRuntimeConfigOut(BaseModel):
     llm_model: str
     llm_temperature: float
     llm_timeout_seconds: int
+    gemini_enabled: bool = False
+    has_gemini_api_key: bool = False
+    gemini_model: str = "gemini-2.0-flash"
 
 
 class LLMRuntimeConfigUpdate(BaseModel):
@@ -21,3 +24,6 @@ class LLMRuntimeConfigUpdate(BaseModel):
     llm_model: str = Field(min_length=1, max_length=120)
     llm_temperature: float = Field(ge=0.0, le=2.0)
     llm_timeout_seconds: int = Field(ge=1, le=300)
+    gemini_enabled: bool = False
+    gemini_api_key: str | None = Field(default=None, max_length=500)
+    gemini_model: str = Field(default="gemini-2.0-flash", max_length=120)

@@ -16,6 +16,7 @@ export default function AdminSettingsPage() {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [llmApiKeyInput, setLlmApiKeyInput] = useState("");
+  const [geminiApiKeyInput, setGeminiApiKeyInput] = useState("");
 
   const [form, setForm] = useState<LLMRuntimeConfigInfo>({
     llm_enabled: true,
@@ -26,6 +27,9 @@ export default function AdminSettingsPage() {
     llm_model: "",
     llm_temperature: 0.2,
     llm_timeout_seconds: 30,
+    gemini_enabled: false,
+    has_gemini_api_key: false,
+    gemini_model: "gemini-2.0-flash",
   });
 
   const loadData = useCallback(async () => {
@@ -64,10 +68,14 @@ export default function AdminSettingsPage() {
         llm_model: form.llm_model.trim(),
         llm_temperature: Number(form.llm_temperature),
         llm_timeout_seconds: Number(form.llm_timeout_seconds),
+        gemini_enabled: form.gemini_enabled,
+        gemini_api_key: geminiApiKeyInput.trim() || undefined,
+        gemini_model: (form.gemini_model || "gemini-2.0-flash").trim(),
       });
 
       setForm(updated);
     setLlmApiKeyInput("");
+      setGeminiApiKeyInput("");
       setMessage("Đã cập nhật cấu hình LLM.");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Không thể cập nhật cấu hình");
@@ -204,6 +212,43 @@ export default function AdminSettingsPage() {
                 </p>
               </div>
             )}
+
+            <div className="rounded-lg border p-4 space-y-3">
+              <label className="flex items-center gap-2 text-sm font-medium">
+                <input
+                  type="checkbox"
+                  checked={form.gemini_enabled}
+                  onChange={(e) => setForm((prev) => ({ ...prev, gemini_enabled: e.target.checked }))}
+                  className="h-4 w-4"
+                />
+                Bật Google Gemini làm validator chéo
+              </label>
+              <p className="text-xs text-muted-foreground">
+                Câu hỏi do LLM sinh ra sẽ được Gemini giải độc lập — chỉ nhận câu khi hai model
+                đồng thuận về đáp án (kiểm soát chất lượng 2 lớp).
+              </p>
+              {form.gemini_enabled && (
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="space-y-1">
+                    <label className="text-sm font-medium">Gemini API Key</label>
+                    <Input
+                      type="password"
+                      value={geminiApiKeyInput}
+                      onChange={(e) => setGeminiApiKeyInput(e.target.value)}
+                      placeholder={form.has_gemini_api_key ? "Đã có key, nhập để thay thế" : "Nhập Gemini API key"}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-sm font-medium">Gemini Model</label>
+                    <Input
+                      value={form.gemini_model}
+                      onChange={(e) => setForm((prev) => ({ ...prev, gemini_model: e.target.value }))}
+                      placeholder="gemini-2.0-flash"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
 
             <Button onClick={handleSave} disabled={saving}>
               {saving ? "Đang lưu..." : "Lưu cấu hình"}

@@ -5,7 +5,11 @@ If an external LLM is integrated later, keep this function signature stable.
 """
 
 from random import choice
-from app.engine.llm_client import generate_mcq_with_llm, validate_generated_mcq_with_llm
+from app.engine.llm_client import (
+    generate_mcq_with_llm,
+    validate_generated_mcq_with_llm,
+    cross_validate_with_gemini,
+)
 
 
 def _predict_irt_params(stem: str, target_level: str) -> tuple[float, float, float]:
@@ -196,6 +200,13 @@ def generate_validated_question_for_cat(
                 raise ValueError("validator solved answer mismatches generated key")
             if abs(float(validation["estimated_b"]) - float(target_b)) > 0.8:
                 raise ValueError("validator estimated_b too far from target")
+
+            # Optional second gate: Gemini must not disagree with the key
+            gemini = cross_validate_with_gemini(normalized, runtime_settings=runtime_settings)
+            if gemini["enabled"] and gemini["agree"] is False:
+                raise ValueError(f"gemini disagrees: {gemini['notes']}")
+            if gemini["enabled"]:
+                normalized["explanation"] += f" | Gemini cross-check: {'đồng thuận' if gemini['agree'] else 'không kết luận'}."
 
             normalized["generation_source"] = "llm-cat"
             normalized["llm_model"] = llm_model

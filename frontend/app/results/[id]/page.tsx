@@ -446,8 +446,47 @@ export default function ResultsPage() {
                         <span className="text-primary">{r.question.external_id}</span>
                         {" "}<MathContent content={r.question.stem} inline />
                       </p>
+                      {(r.question.question_format || "mcq") === "short_answer" ? (
+                        <div className="mt-2 space-y-1.5 text-sm">
+                          <div className={cn(
+                            "p-2 rounded",
+                            r.is_correct ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"
+                          )}>
+                            <span className="font-medium">Bạn trả lời:</span>{" "}
+                            {r.user_answer_text || <i>bỏ trống</i>}
+                          </div>
+                          <div className="p-2 rounded bg-green-50 text-green-800">
+                            <span className="font-medium">Đáp án:</span>{" "}
+                            {(r.question.answer_text || "").split("|")[0]}
+                          </div>
+                        </div>
+                      ) : (r.question.question_format || "mcq") === "matching" ? (
+                        <div className="mt-2 space-y-1 text-sm">
+                          {(r.question.matching_pairs || []).map((pair) => {
+                            let userMap: Record<string, string> = {};
+                            try { userMap = JSON.parse(r.user_answer_text || "{}"); } catch {}
+                            const chosen = userMap[pair.left];
+                            const ok = chosen === pair.right;
+                            return (
+                              <div key={pair.left} className={cn(
+                                "flex flex-wrap items-center gap-2 p-2 rounded",
+                                ok ? "bg-green-50" : "bg-red-50"
+                              )}>
+                                <MathContent content={pair.left} inline />
+                                <span className="text-muted-foreground">→</span>
+                                <span className={ok ? "text-green-800 font-medium" : "text-red-800 line-through"}>
+                                  {chosen || "(bỏ trống)"}
+                                </span>
+                                {!ok && (
+                                  <span className="text-green-800">✓ {pair.right}</span>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
                       <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
-                        {["A", "B", "C", "D"].map((opt) => {
+                        {(r.question.question_format === "true_false" ? ["A", "B"] : ["A", "B", "C", "D"]).map((opt) => {
                           const text = r.question[`option_${opt.toLowerCase()}` as keyof typeof r.question] as string;
                           const isCorrect = opt === r.question.correct_answer;
                           const isUserAnswer = r.user_answer === opt;
@@ -465,6 +504,7 @@ export default function ResultsPage() {
                           );
                         })}
                       </div>
+                      )}
                       <p className="text-xs text-muted-foreground mt-2">
                         {r.question.topic_name} · {r.question.question_type} · 
                         Độ khó: {r.question.difficulty_b} · Thời gian: {r.time_spent_seconds}s

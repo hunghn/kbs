@@ -11,6 +11,10 @@ class QuestionOut(BaseModel):
     option_c: str
     option_d: str
     question_type: str
+    # mcq | true_false | short_answer | matching
+    question_format: str = "mcq"
+    matching_left: list[str] = []
+    matching_right: list[str] = []  # shuffled — never reveals the pairing
     time_limit_seconds: int
     time_display: Optional[str] = None
     is_archived: bool = False
@@ -92,6 +96,8 @@ class QuestionWithAnswer(QuestionOut):
     difficulty_b: float
     discrimination_a: float
     guessing_c: float
+    answer_text: Optional[str] = None       # short_answer reference
+    matching_pairs: list[dict] = []          # matching solution
 
 
 class AnswerSubmit(BaseModel):
@@ -274,6 +280,7 @@ class ChainStateOut(BaseModel):
 class QuizResultDetail(BaseModel):
     question: QuestionWithAnswer
     user_answer: Optional[str] = None
+    user_answer_text: Optional[str] = None  # non-MCQ formats
     is_correct: bool
     time_spent_seconds: int = 0
 

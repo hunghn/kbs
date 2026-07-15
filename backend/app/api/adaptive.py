@@ -312,22 +312,27 @@ async def submit_exam(
     response_id_by_question = {r.question_id: r.id for r in responses}
 
     if not already_completed:
+        from app.services.adaptive_shared import grade_answer
+
         answer_map = {a.question_id: a for a in payload.answers}
         for resp in responses:
             q = resp.question
             user_ans = answer_map.get(resp.question_id)
             if user_ans and (user_ans.user_answer or "").strip():
-                resp.user_answer = user_ans.user_answer.strip().upper()[:1]
-                resp.is_correct = resp.user_answer == q.correct_answer.upper()
+                is_correct, letter, full_text = grade_answer(q, user_ans.user_answer)
+                resp.user_answer = letter
+                resp.answer_text = full_text
+                resp.is_correct = is_correct
                 resp.time_spent_seconds = user_ans.time_spent_seconds
                 # R7: guessing suspicion (correct too fast on a guessable item)
                 resp.guessing_flag = bool(
-                    resp.is_correct
+                    is_correct
                     and (user_ans.time_spent_seconds or 0) < 10
                     and float(q.guessing_c) > 0.2
                 )
             else:
                 resp.user_answer = None
+                resp.answer_text = None
                 resp.is_correct = False
                 resp.guessing_flag = False
         await db.flush()

@@ -454,7 +454,12 @@ export default function QuestionsPage() {
 
       <main className="container py-6 space-y-6">
         <div className="rounded-2xl border bg-gradient-to-br from-slate-50 to-white p-5">
-          <h1 className="text-2xl font-bold tracking-tight">Quản lý ngân hàng câu hỏi</h1>
+          <div className="flex items-center justify-between">
+            <h1 className="text-2xl font-bold tracking-tight">Quản lý ngân hàng câu hỏi</h1>
+            <Button onClick={() => router.push("/questions/builder")}>
+              Tạo đề thi
+            </Button>
+          </div>
           <div className="mt-4 grid gap-3 sm:grid-cols-3">
             <div className="rounded-lg border bg-white p-3">
               <p className="text-xs text-muted-foreground">Tổng câu hỏi</p>

@@ -14,3 +14,7 @@ class LLMRuntimeConfig(Base):
     llm_model = Column(String(120), nullable=False, default="gpt-5.1")
     llm_temperature = Column(Float, nullable=False, default=0.2)
     llm_timeout_seconds = Column(Integer, nullable=False, default=30)
+    # Google Gemini cross-validator (second-opinion check on generated items)
+    gemini_enabled = Column(Boolean, nullable=False, default=False)
+    gemini_api_key = Column(String(500), nullable=False, default="")
+    gemini_model = Column(String(120), nullable=False, default="gemini-2.0-flash")

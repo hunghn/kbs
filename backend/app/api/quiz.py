@@ -226,32 +226,77 @@ async def start_preset_exam(
         db.add(QuizResponse(session_id=session.id, question_id=item.question_id, is_correct=False))
     await db.commit()
 
+    from app.services.adaptive_shared import question_to_out
+
     return {
         "session_id": session.id,
         "preset_id": preset.id,
         "preset_name": preset.name,
         "subject_id": preset.subject_id,
-        "questions": [
-            {
-                "id": it.question.id,
-                "external_id": it.question.external_id,
-                "stem": it.question.stem,
-                "option_a": it.question.option_a,
-                "option_b": it.question.option_b,
-                "option_c": it.question.option_c,
-                "option_d": it.question.option_d,
-                "question_type": it.question.question_type,
-                "time_limit_seconds": it.question.time_limit_seconds,
-                "time_display": it.question.time_display,
-                "topic_name": it.question.topic.name if it.question.topic else "",
-                "major_topic_name": (
-                    it.question.topic.major_topic.name
-                    if it.question.topic and it.question.topic.major_topic
-                    else ""
-                ),
-            }
-            for it in items
-        ],
+        "questions": [question_to_out(it.question) for it in items],
+    }
+
+
+@router.post("/practice/start")
+async def start_practice(
+    topic_id: int,
+    num_questions: int = 5,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Luyện ngay một topic trong lộ trình: đề mini chọn câu quanh θ hiệu dụng
+    (đã áp đường cong quên) của người học cho topic đó."""
+    from app.models.user import UserTopicProgress
+    from app.services.adaptive_shared import apply_forgetting, question_to_out
+
+    topic = await db.get(Topic, topic_id)
+    if not topic:
+        raise HTTPException(status_code=404, detail="Topic not found")
+    major = await db.get(MajorTopic, topic.major_topic_id)
+
+    prog = (
+        await db.execute(
+            select(UserTopicProgress).where(
+                UserTopicProgress.user_id == user.id,
+                UserTopicProgress.topic_id == topic_id,
+            )
+        )
+    ).scalar_one_or_none()
+    theta_eff = 0.0
+    if prog and (prog.questions_attempted or 0) > 0:
+        theta_eff, _days = apply_forgetting(float(prog.theta_estimate or 0.0), prog.updated_at)
+
+    pool = (
+        await db.execute(
+            select(Question)
+            .where(Question.topic_id == topic_id)
+            .where(Question.is_archived.is_(False))
+            .options(selectinload(Question.topic).selectinload(Topic.major_topic))
+        )
+    ).scalars().all()
+    if not pool:
+        raise HTTPException(status_code=400, detail="Topic chưa có câu hỏi trong ngân hàng")
+
+    n = max(1, min(int(num_questions), 20))
+    picked = sorted(pool, key=lambda q: abs(float(q.difficulty_b) - theta_eff))[:n]
+
+    session = QuizSession(
+        user_id=user.id,
+        subject_id=major.subject_id if major else topic.major_topic_id,
+        total_questions=len(picked),
+    )
+    db.add(session)
+    await db.flush()
+    for q in picked:
+        db.add(QuizResponse(session_id=session.id, question_id=q.id, is_correct=False))
+    await db.commit()
+
+    return {
+        "session_id": session.id,
+        "topic_id": topic_id,
+        "topic_name": topic.name,
+        "anchor_theta": round(theta_eff, 2),
+        "questions": [question_to_out(q) for q in picked],
     }
 
 
@@ -448,25 +493,9 @@ async def get_quiz_questions(
     )
     responses = result.scalars().all()
 
-    questions = []
-    for r in responses:
-        q = r.question
-        questions.append(QuestionOut(
-            id=q.id,
-            external_id=q.external_id,
-            stem=q.stem,
-            option_a=q.option_a,
-            option_b=q.option_b,
-            option_c=q.option_c,
-            option_d=q.option_d,
-            question_type=q.question_type,
-            time_limit_seconds=q.time_limit_seconds,
-            time_display=q.time_display,
-            topic_name=q.topic.name if q.topic else "",
-            major_topic_name=q.topic.major_topic.name if q.topic and q.topic.major_topic else "",
-        ))
+    from app.services.adaptive_shared import question_to_out
 
-    return questions
+    return [question_to_out(r.question) for r in responses]
 
 
 @router.post("/{session_id}/submit")
@@ -498,15 +527,19 @@ async def submit_answers(
     # Map answers
     answer_map = {a.question_id: a for a in answers}
 
+    from app.services.adaptive_shared import grade_answer
+
     scoring_data = []
     for qid, resp in db_responses.items():
         q = resp.question
         user_ans = answer_map.get(qid)
-        if user_ans:
-            resp.user_answer = user_ans.user_answer
-            resp.is_correct = user_ans.user_answer.upper() == q.correct_answer.upper()
+        if user_ans and (user_ans.user_answer or "").strip():
+            is_correct, letter, full_text = grade_answer(q, user_ans.user_answer)
+            resp.user_answer = letter
+            resp.answer_text = full_text
+            resp.is_correct = is_correct
             resp.time_spent_seconds = user_ans.time_spent_seconds
-            resp.guessing_flag = bool(resp.is_correct and (user_ans.time_spent_seconds or 0) < 5 and float(q.guessing_c) > 0.25)
+            resp.guessing_flag = bool(is_correct and (user_ans.time_spent_seconds or 0) < 5 and float(q.guessing_c) > 0.25)
         else:
             resp.is_correct = False
             resp.guessing_flag = False
@@ -632,7 +665,7 @@ async def get_quiz_results(
         topic_scores[tname]["total"] += 1
         if r.is_correct:
             topic_scores[tname]["correct"] += 1
-        if r.user_answer is not None:
+        if r.user_answer is not None or r.answer_text is not None:
             answered_count += 1
 
         scoring_data.append({
@@ -651,6 +684,15 @@ async def get_quiz_results(
             "guessing_flag": bool(r.guessing_flag),
         })
 
+        import json as _json
+        from app.services.adaptive_shared import matching_sides
+        _fmt = (q.question_format or "mcq").lower()
+        _left, _right = matching_sides(q) if _fmt == "matching" else ([], [])
+        try:
+            _pairs = _json.loads(q.matching_pairs or "[]") if _fmt == "matching" else []
+        except (ValueError, TypeError):
+            _pairs = []
+
         results.append(QuizResultDetail(
             question=QuestionWithAnswer(
                 id=q.id,
@@ -665,12 +707,18 @@ async def get_quiz_results(
                 discrimination_a=float(q.discrimination_a),
                 guessing_c=float(q.guessing_c),
                 question_type=q.question_type,
+                question_format=_fmt,
+                matching_left=_left,
+                matching_right=_right,
+                answer_text=q.answer_text,
+                matching_pairs=_pairs,
                 time_limit_seconds=q.time_limit_seconds,
                 time_display=q.time_display,
                 topic_name=tname,
                 major_topic_name=q.topic.major_topic.name if q.topic and q.topic.major_topic else "",
             ),
             user_answer=r.user_answer,
+            user_answer_text=r.answer_text,
             is_correct=r.is_correct,
             time_spent_seconds=r.time_spent_seconds or 0,
         ))

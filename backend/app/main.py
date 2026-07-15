@@ -11,6 +11,7 @@ from app.api.questions import router as questions_router
 from app.api.admin import router as admin_router
 from app.api.adaptive import router as adaptive_router
 from app.api.agents import router as agents_router
+from app.api.builder import router as builder_router
 
 
 @asynccontextmanager
@@ -84,6 +85,39 @@ async def lifespan(app: FastAPI):
                 "ADD COLUMN IF NOT EXISTS prior_theta NUMERIC(6,3)"
             )
         )
+        await conn.execute(
+            text(
+                "ALTER TABLE IF EXISTS questions "
+                "ADD COLUMN IF NOT EXISTS question_format VARCHAR(20) NOT NULL DEFAULT 'mcq'"
+            )
+        )
+        await conn.execute(
+            text("ALTER TABLE IF EXISTS questions ADD COLUMN IF NOT EXISTS answer_text TEXT")
+        )
+        await conn.execute(
+            text("ALTER TABLE IF EXISTS questions ADD COLUMN IF NOT EXISTS matching_pairs TEXT")
+        )
+        await conn.execute(
+            text("ALTER TABLE IF EXISTS quiz_responses ADD COLUMN IF NOT EXISTS answer_text TEXT")
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE IF EXISTS llm_runtime_config "
+                "ADD COLUMN IF NOT EXISTS gemini_enabled BOOLEAN NOT NULL DEFAULT FALSE"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE IF EXISTS llm_runtime_config "
+                "ADD COLUMN IF NOT EXISTS gemini_api_key VARCHAR(500) NOT NULL DEFAULT ''"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE IF EXISTS llm_runtime_config "
+                "ADD COLUMN IF NOT EXISTS gemini_model VARCHAR(120) NOT NULL DEFAULT 'gemini-2.0-flash'"
+            )
+        )
 
     # Seed the Skill ontology layer and preset exams (both idempotent)
     from app.database import async_session
@@ -122,6 +156,7 @@ app.include_router(questions_router)
 app.include_router(admin_router)
 app.include_router(adaptive_router)
 app.include_router(agents_router)
+app.include_router(builder_router)
 
 
 @app.get("/api/health")

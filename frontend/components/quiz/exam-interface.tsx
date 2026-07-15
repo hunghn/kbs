@@ -3,11 +3,119 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { MathContent } from "@/components/common/math-content";
 import { cn } from "@/lib/utils";
-import { Clock, Send, FileText } from "lucide-react";
-import type { AdaptiveExamInfo, AnswerSubmit } from "@/lib/api";
+import { Clock, Send, FileText, GripVertical, X } from "lucide-react";
+import type { AdaptiveExamInfo, AnswerSubmit, QuestionInfo } from "@/lib/api";
+
+/** Kéo-thả ghép đôi: kéo (hoặc bấm chọn) mục bên phải thả vào ô bên trái. */
+function MatchingQuestion({
+  question,
+  value,
+  onChange,
+}: {
+  question: QuestionInfo;
+  value: string;
+  onChange: (json: string) => void;
+}) {
+  const left = question.matching_left || [];
+  const right = question.matching_right || [];
+  let mapping: Record<string, string> = {};
+  try {
+    mapping = value ? JSON.parse(value) : {};
+  } catch {
+    mapping = {};
+  }
+  const used = new Set(Object.values(mapping));
+  const [picked, setPicked] = useState<string | null>(null);
+
+  const assign = (l: string, r: string) => {
+    const next = { ...mapping };
+    // Remove r from any other slot first
+    for (const key of Object.keys(next)) {
+      if (next[key] === r) delete next[key];
+    }
+    next[l] = r;
+    setPicked(null);
+    onChange(JSON.stringify(next));
+  };
+
+  const unassign = (l: string) => {
+    const next = { ...mapping };
+    delete next[l];
+    onChange(JSON.stringify(next));
+  };
+
+  return (
+    <div className="grid gap-4 md:grid-cols-2">
+      {/* Left slots */}
+      <div className="space-y-2">
+        {left.map((l) => (
+          <div
+            key={l}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => {
+              e.preventDefault();
+              const r = e.dataTransfer.getData("text/plain");
+              if (r) assign(l, r);
+            }}
+            onClick={() => picked && assign(l, picked)}
+            className={cn(
+              "flex items-center gap-2 rounded-lg border-2 border-dashed p-2.5 text-sm min-h-11",
+              mapping[l] ? "border-primary/60 bg-primary/5" : "border-muted-foreground/30",
+              picked ? "cursor-pointer hover:border-primary" : ""
+            )}
+          >
+            <span className="font-medium shrink-0"><MathContent content={l} inline /></span>
+            <span className="text-muted-foreground shrink-0">→</span>
+            {mapping[l] ? (
+              <span className="flex items-center gap-1 rounded bg-primary/10 px-2 py-0.5 text-primary">
+                <MathContent content={mapping[l]} inline />
+                <button type="button" onClick={(e) => { e.stopPropagation(); unassign(l); }}>
+                  <X className="h-3 w-3" />
+                </button>
+              </span>
+            ) : (
+              <span className="text-xs text-muted-foreground italic">thả vào đây</span>
+            )}
+          </div>
+        ))}
+      </div>
+      {/* Right pool */}
+      <div className="flex flex-wrap content-start gap-2">
+        {right.map((r) => {
+          const isUsed = used.has(r);
+          return (
+            <button
+              key={r}
+              type="button"
+              draggable={!isUsed}
+              onDragStart={(e) => e.dataTransfer.setData("text/plain", r)}
+              onClick={() => !isUsed && setPicked(picked === r ? null : r)}
+              disabled={isUsed}
+              className={cn(
+                "flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-sm transition-colors",
+                isUsed
+                  ? "opacity-35 line-through cursor-default"
+                  : picked === r
+                    ? "border-primary bg-primary/15 ring-1 ring-primary"
+                    : "hover:bg-accent cursor-grab"
+              )}
+            >
+              <GripVertical className="h-3.5 w-3.5 text-muted-foreground" />
+              <MathContent content={r} inline />
+            </button>
+          );
+        })}
+        <p className="w-full text-xs text-muted-foreground mt-1">
+          Kéo thẻ (hoặc bấm chọn thẻ rồi bấm ô trống) để ghép đôi.
+        </p>
+      </div>
+    </div>
+  );
+}
 
 interface ExamInterfaceProps {
   exam: AdaptiveExamInfo;
@@ -56,11 +164,25 @@ export function ExamInterface({ exam, initialAnswers, onDraftChange, onSubmit }:
     return () => clearInterval(timer);
   }, [exam.session_id]);
 
-  const answeredCount = exam.questions.filter((q) => answers[q.id]).length;
+  const isAnswered = (q: QuestionInfo): boolean => {
+    const v = answers[q.id];
+    if (!v) return false;
+    if ((q.question_format || "mcq") === "matching") {
+      try {
+        const map = JSON.parse(v);
+        return (q.matching_left || []).every((l) => map[l]);
+      } catch {
+        return false;
+      }
+    }
+    return v.trim().length > 0;
+  };
+
+  const answeredCount = exam.questions.filter((q) => isAnswered(q)).length;
 
   const buildPayload = (current: Record<number, string>): AnswerSubmit[] =>
     exam.questions
-      .filter((q) => current[q.id])
+      .filter((q) => (current[q.id] || "").trim().length > 0)
       .map((q) => ({
         question_id: q.id,
         user_answer: current[q.id],
@@ -166,8 +288,27 @@ export function ExamInterface({ exam, initialAnswers, onDraftChange, onSubmit }:
               </CardDescription>
             </CardHeader>
             <CardContent>
+              {(q.question_format || "mcq") === "short_answer" ? (
+                <div className="space-y-1">
+                  <Input
+                    placeholder="Nhập câu trả lời ngắn..."
+                    value={answers[q.id] || ""}
+                    onChange={(e) => selectAnswer(q.id, e.target.value)}
+                    className="max-w-xl"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Trả lời ngắn gọn — hệ thống chấm theo đáp án chuẩn hóa.
+                  </p>
+                </div>
+              ) : (q.question_format || "mcq") === "matching" ? (
+                <MatchingQuestion
+                  question={q}
+                  value={answers[q.id] || ""}
+                  onChange={(json) => selectAnswer(q.id, json)}
+                />
+              ) : (
               <div className="grid gap-2 md:grid-cols-2">
-                {(["A", "B", "C", "D"] as const).map((opt) => {
+                {((q.question_format === "true_false" ? ["A", "B"] : ["A", "B", "C", "D"]) as ("A" | "B" | "C" | "D")[]).map((opt) => {
                   const text = q[`option_${opt.toLowerCase()}` as "option_a" | "option_b" | "option_c" | "option_d"];
                   const selected = answers[q.id] === opt;
                   return (
@@ -193,6 +334,7 @@ export function ExamInterface({ exam, initialAnswers, onDraftChange, onSubmit }:
                   );
                 })}
               </div>
+              )}
             </CardContent>
           </Card>
         ))}

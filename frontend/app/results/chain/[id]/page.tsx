@@ -312,6 +312,12 @@ export default function ChainSummaryPage() {
                           Tiên quyết: {step.prerequisite_names.join(", ")}
                         </p>
                       )}
+                      <Link
+                        href={`/quiz?practice_topic=${step.topic_id}`}
+                        className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+                      >
+                        ▶ Luyện ngay 5 câu topic này
+                      </Link>
                     </li>
                   );
                 })}

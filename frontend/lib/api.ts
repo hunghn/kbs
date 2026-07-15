@@ -111,6 +111,48 @@ export const presetAPI = {
     fetchAPI<PresetStartInfo>(`/quiz/presets/${presetId}/start`, { method: "POST" }),
 };
 
+// Exam builder (giáo viên tạo đề)
+export const builderAPI = {
+  build: (payload: BuildDraftPayload) =>
+    fetchAPI<BuildDraftInfo>("/quiz/presets/build", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  generateOne: (payload: {
+    subject_id: number;
+    topic_id: number;
+    question_format: string;
+    bloom: string;
+    target_b?: number | null;
+  }) =>
+    fetchAPI<BuilderItemInfo>("/quiz/presets/generate-one", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  save: (payload: {
+    subject_id: number;
+    name: string;
+    description?: string;
+    question_ids: number[];
+    discarded_generated_ids: number[];
+  }) =>
+    fetchAPI<{ preset_id: number; name: string; question_count: number }>(
+      "/quiz/presets/save",
+      { method: "POST", body: JSON.stringify(payload) }
+    ),
+};
+
+// Practice (luyện ngay theo lộ trình)
+export const practiceAPI = {
+  start: (topicId: number, numQuestions = 5) =>
+    fetchAPI<PracticeStartInfo>(
+      `/quiz/practice/start?topic_id=${topicId}&num_questions=${numQuestions}`,
+      { method: "POST" }
+    ),
+};
+
 // Exam-batch adaptive testing (multi-stage)
 export const adaptiveAPI = {
   start: (config: AdaptiveStartConfig) =>
@@ -344,6 +386,9 @@ export interface QuestionInfo {
   option_c: string;
   option_d: string;
   question_type: string;
+  question_format?: "mcq" | "true_false" | "short_answer" | "matching";
+  matching_left?: string[];
+  matching_right?: string[];
   time_limit_seconds: number;
   time_display?: string;
   topic_name: string;
@@ -378,6 +423,75 @@ export interface PresetStartInfo {
   preset_id: number;
   preset_name: string;
   subject_id: number;
+  questions: QuestionInfo[];
+}
+
+export interface BuildDraftPayload {
+  subject_id: number;
+  topic_ids?: number[];
+  mcq: number;
+  true_false: number;
+  short_answer: number;
+  matching: number;
+  recognition_pct: number;
+  comprehension_pct: number;
+  application_pct: number;
+  anchor_mode: "manual" | "learners";
+  target_b?: number | null;
+  use_llm: boolean;
+}
+
+export interface BuilderItemInfo {
+  id: number;
+  external_id: string;
+  stem: string;
+  question_format: string;
+  question_type: string;
+  topic_id: number;
+  topic_name: string;
+  option_a: string;
+  option_b: string;
+  option_c: string;
+  option_d: string;
+  correct_answer: string;
+  answer_text?: string | null;
+  matching_pairs: { left: string; right: string }[];
+  difficulty_b: number;
+  discrimination_a: number;
+  source: "bank" | "llm";
+  validation?: {
+    self_check?: {
+      is_valid?: boolean;
+      solved_answer?: string;
+      estimated_b?: number;
+      confidence?: number;
+      agrees?: boolean;
+      error?: string;
+    } | null;
+    gemini?: {
+      enabled: boolean;
+      agree?: boolean | null;
+      gemini_answer?: string | null;
+      notes?: string;
+    } | null;
+  } | null;
+}
+
+export interface BuildDraftInfo {
+  subject_id: number;
+  requested: number;
+  built: number;
+  anchor_b?: number | null;
+  items: BuilderItemInfo[];
+  warnings: string[];
+  sources: { bank: number; llm: number };
+}
+
+export interface PracticeStartInfo {
+  session_id: number;
+  topic_id: number;
+  topic_name: string;
+  anchor_theta: number;
   questions: QuestionInfo[];
 }
 
@@ -652,6 +766,9 @@ export interface LLMRuntimeConfigInfo {
   llm_model: string;
   llm_temperature: number;
   llm_timeout_seconds: number;
+  gemini_enabled: boolean;
+  has_gemini_api_key: boolean;
+  gemini_model: string;
 }
 
 export interface LLMRuntimeConfigUpdatePayload {
@@ -663,6 +780,9 @@ export interface LLMRuntimeConfigUpdatePayload {
   llm_model: string;
   llm_temperature: number;
   llm_timeout_seconds: number;
+  gemini_enabled: boolean;
+  gemini_api_key?: string;
+  gemini_model: string;
 }
 
 export interface QuestionManageBase {
@@ -744,8 +864,11 @@ export interface QuizResultInfo {
       difficulty_b: number;
       discrimination_a: number;
       guessing_c: number;
+      answer_text?: string | null;
+      matching_pairs?: { left: string; right: string }[];
     };
     user_answer?: string;
+    user_answer_text?: string | null;
     is_correct: boolean;
     time_spent_seconds: number;
   }[];

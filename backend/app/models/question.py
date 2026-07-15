@@ -57,6 +57,12 @@ class Question(Base):
     discrimination_a = Column(Numeric(4, 2), nullable=False)
     guessing_c = Column(Numeric(4, 2), nullable=False)
     question_type = Column(String(50), nullable=False)  # Nhận biết, Thông hiểu, Vận dụng
+    # mcq | true_false | short_answer | matching
+    question_format = Column(String(20), nullable=False, default="mcq")
+    # short_answer: reference answer, aliases separated by "|"
+    answer_text = Column(Text)
+    # matching: JSON list [{"left": ..., "right": ...}, ...]
+    matching_pairs = Column(Text)
     time_limit_seconds = Column(Integer, nullable=False)
     time_display = Column(String(10))
     is_archived = Column(Boolean, nullable=False, default=False)

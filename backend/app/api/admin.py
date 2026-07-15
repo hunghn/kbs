@@ -47,6 +47,10 @@ async def update_llm_settings(
     row.llm_model = payload.llm_model
     row.llm_temperature = payload.llm_temperature
     row.llm_timeout_seconds = payload.llm_timeout_seconds
+    row.gemini_enabled = payload.gemini_enabled
+    if payload.gemini_api_key is not None and payload.gemini_api_key.strip():
+        row.gemini_api_key = payload.gemini_api_key.strip()
+    row.gemini_model = (payload.gemini_model or "gemini-2.0-flash").strip()
 
     await db.commit()
     await db.refresh(row)
@@ -60,4 +64,7 @@ async def update_llm_settings(
         llm_model=row.llm_model,
         llm_temperature=float(row.llm_temperature),
         llm_timeout_seconds=row.llm_timeout_seconds,
+        gemini_enabled=bool(row.gemini_enabled),
+        has_gemini_api_key=bool(row.gemini_api_key),
+        gemini_model=row.gemini_model or "gemini-2.0-flash",
     )

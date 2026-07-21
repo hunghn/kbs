@@ -12,19 +12,23 @@ import {
 } from "lucide-react";
 import { RadarChart } from "@/components/dashboard/radar-chart";
 import { DKTPrediction } from "@/components/dashboard/dkt-prediction";
+import { personalAPI } from "@/lib/api";
 
 export function Dashboard() {
   const [dashboard, setDashboard] = useState<DashboardInfo | null>(null);
   const [subjects, setSubjects] = useState<SubjectSummary[]>([]);
   const [loading, setLoading] = useState(true);
+  const [needsOnboarding, setNeedsOnboarding] = useState(false);
 
   useEffect(() => {
     Promise.all([
       userAPI.getDashboard().catch(() => null),
       knowledgeAPI.getSubjects().catch(() => []),
-    ]).then(([dash, subs]) => {
+      personalAPI.getProfile().catch(() => null),
+    ]).then(([dash, subs, profile]) => {
       setDashboard(dash);
       setSubjects(subs);
+      setNeedsOnboarding(profile != null && !profile.onboarded);
       setLoading(false);
     });
   }, []);
@@ -41,6 +45,20 @@ export function Dashboard() {
 
   return (
     <main className="container py-6 space-y-6">
+      {needsOnboarding && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border-2 border-sky-300 bg-gradient-to-r from-sky-50 to-cyan-50 p-4">
+          <div>
+            <p className="font-semibold">🎯 Cá nhân hóa việc học của bạn</p>
+            <p className="text-sm text-muted-foreground">
+              Làm bài test đầu vào 12 câu, đặt mục tiêu và chọn lịch rảnh — hệ thống sẽ dựng
+              lộ trình học theo tuần dành riêng cho bạn.
+            </p>
+          </div>
+          <Link href="/onboarding">
+            <Button>Bắt đầu thiết lập</Button>
+          </Link>
+        </div>
+      )}
       {/* Stats */}
       <div className="grid gap-4 md:grid-cols-4">
         <Card>

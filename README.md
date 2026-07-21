@@ -306,6 +306,12 @@ Sau mỗi phiên, hệ thống có thể cung cấp:
 | GET | `/api/knowledge/subjects/:id/ability-graph` | Đồ thị tri thức năng lực cá nhân (kèm tầng Kỹ năng) |
 | GET | `/api/users/learning-path` | Lộ trình học đề xuất theo đồ thị tiên quyết |
 | GET | `/api/users/dashboard` | Lấy dữ liệu dashboard của người dùng |
+| GET/POST | `/api/personal/profile` | Hồ sơ cá nhân: lịch rảnh, trạng thái onboarding |
+| POST | `/api/personal/placement/start` | Bắt đầu bài test đầu vào |
+| POST | `/api/personal/plan/generate` | Sinh lộ trình học theo tuần (có validate) |
+| GET | `/api/personal/plan` | Lộ trình hiện tại + θ dự phóng vs thực tế |
+| POST | `/api/personal/plan/item/:id/start` \| `/complete` | Bắt đầu / hoàn thành một buổi học |
+| GET | `/api/personal/monthly-report` | Báo cáo 30 ngày: tiến độ, Δθ, điểm mạnh/yếu |
 
 ## Các mô-đun nâng cấp (Project 2 – 2026)
 
@@ -445,7 +451,40 @@ Trang **Tạo đề thi** (`/questions/builder`, nút trong Quản lý câu hỏ
 `POST /api/quiz/practice/start` sinh đề mini 5 câu của đúng topic đó, chọn câu quanh
 θ hiệu dụng (đã áp đường cong quên) của người học.
 
-### 10. Đánh giá toán học độ hội tụ năng lực
+### 10. Giao diện learner-first (kiểu ELSA/Duolingo)
+
+Trang chủ được thiết kế lại lấy người học làm trung tâm thay vì bảng phân tích:
+hero cá nhân hóa (lời chào, vòng tiến độ θ→mục tiêu từng môn), card **"Buổi học
+tiếp theo"** nổi bật với nút Học ngay, **path tuần** dạng chuỗi node nối nhau
+(node tròn xanh = đã học, xanh dương nhấp nháy = buổi hiện tại, xám = chưa tới),
+4 lối vào nhanh (Thi thích ứng / Đề có sẵn / Bản đồ năng lực / Thống kê).
+Bảng phân tích chi tiết (radar chart, DKT, lịch sử) chuyển sang trang riêng
+`/stats`. Navbar tối giản 5 mục cho người học (`Trang chủ, Lộ trình, Luyện tập,
+Tri thức, Thống kê`) + dropdown "Quản trị" gom các công cụ giáo viên/hệ thống
+(ngân hàng câu hỏi, tạo đề, đánh giá hệ thống, Multi-Agent, cấu hình).
+
+### 11. Học tập cá nhân hóa (Onboarding → Lộ trình tuần → Báo cáo tháng)
+
+Trải nghiệm kiểu ứng dụng học ngoại ngữ (`/onboarding`, `/my-plan`):
+
+1. **Onboarding 3 bước**: đặt mục tiêu mỗi môn (Khá/Giỏi/Xuất sắc ↔ θ 0.5/1.0/1.5,
+   4/8/12 tuần) → chọn **lịch rảnh trong tuần** (lưới 7 ngày × 3 buổi) → làm
+   **test đầu vào** 12 câu/môn (trải độ khó, phủ topic) đo điểm xuất phát.
+2. **Sinh lộ trình tuần** (`app/services/plan_builder.py`): xếp buổi học vào đúng
+   các buổi rảnh, thứ tự topic theo đồ thị tiên quyết, topic yếu được **ôn lại
+   cách quãng** (spaced repetition), cuối tuần chẵn có thi thử tổng hợp.
+3. **Lộ trình được kiểm chứng (validate)**: mô hình dự phóng learning-gain giảm dần
+   (`Δθ = 0.3·e^(−0.4k)` cho buổi luyện thứ k) sinh đường cong θ dự kiến theo tuần —
+   khả thi khi chạm mục tiêu đúng hạn, ngược lại báo rõ và gợi ý thêm buổi/tăng
+   tuần/hạ mục tiêu. Trang Lộ trình vẽ **dự phóng vs θ thực tế** cạnh đường mục tiêu.
+4. **Theo dõi**: mỗi buổi có nút "Học ngay" (5 câu topic quanh θ hiệu dụng, thi thử
+   10 câu trải môn), hoàn thành tự tick + lưu điểm; **báo cáo 30 ngày**: số buổi
+   hoàn thành, Δθ đầu–cuối kỳ, top chủ đề cần cải thiện / đang làm tốt.
+
+Bảng mới: `learner_profiles` (lịch rảnh), `study_plans` (mục tiêu + dự phóng),
+`study_plan_items` (buổi học tuần × thứ × buổi × hoạt động).
+
+### 12. Đánh giá toán học độ hội tụ năng lực
 
 Mô-đun mô phỏng `backend/app/evaluation/convergence.py` (CLI:
 `python -m app.evaluation.convergence --subject 2`) giả lập sinh viên có θ thật trải đều

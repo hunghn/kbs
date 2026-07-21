@@ -12,6 +12,7 @@ from app.api.admin import router as admin_router
 from app.api.adaptive import router as adaptive_router
 from app.api.agents import router as agents_router
 from app.api.builder import router as builder_router
+from app.api.personal import router as personal_router
 
 
 @asynccontextmanager
@@ -157,6 +158,7 @@ app.include_router(admin_router)
 app.include_router(adaptive_router)
 app.include_router(agents_router)
 app.include_router(builder_router)
+app.include_router(personal_router)
 
 
 @app.get("/api/health")

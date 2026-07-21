@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { authAPI } from "@/lib/api";
 import { Navbar } from "@/components/layout/navbar";
 import { LoginForm } from "@/components/auth/login-form";
-import { Dashboard } from "@/components/dashboard/dashboard";
+import { LearnerHome } from "@/components/home/learner-home";
 
 export default function HomePage() {
   const [user, setUser] = useState<{ id: number; username: string } | null>(null);
@@ -54,7 +54,7 @@ export default function HomePage() {
   return (
     <div className="min-h-screen">
       <Navbar user={user} onLogout={handleLogout} />
-      <Dashboard />
+      <LearnerHome user={user} />
     </div>
   );
 }

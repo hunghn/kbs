@@ -214,6 +214,47 @@ export const evaluationAPI = {
   },
 };
 
+// Personalized learning (onboarding, placement, study plan)
+export const personalAPI = {
+  getProfile: () => fetchAPI<PersonalProfileInfo>("/personal/profile"),
+
+  saveProfile: (payload: { availability: AvailabilitySlot[]; onboarded?: boolean }) =>
+    fetchAPI<{ ok: boolean }>("/personal/profile", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  startPlacement: (subjectId: number) =>
+    fetchAPI<{ session_id: number; subject_id: number; questions: QuestionInfo[] }>(
+      `/personal/placement/start?subject_id=${subjectId}`,
+      { method: "POST" }
+    ),
+
+  generatePlan: (payload: { subject_id: number; goal: string; target_weeks: number }) =>
+    fetchAPI<StudyPlanInfo>("/personal/plan/generate", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  getPlan: (subjectId: number) =>
+    fetchAPI<StudyPlanInfo>(`/personal/plan?subject_id=${subjectId}`),
+
+  startItem: (itemId: number) =>
+    fetchAPI<{ session_id: number; item_id: number; activity: string; questions: QuestionInfo[] }>(
+      `/personal/plan/item/${itemId}/start`,
+      { method: "POST" }
+    ),
+
+  completeItem: (itemId: number, sessionId: number) =>
+    fetchAPI<{ ok: boolean; score: number; total: number }>(
+      `/personal/plan/item/${itemId}/complete`,
+      { method: "POST", body: JSON.stringify({ session_id: sessionId }) }
+    ),
+
+  monthlyReport: (subjectId: number) =>
+    fetchAPI<MonthlyReportInfo>(`/personal/monthly-report?subject_id=${subjectId}`),
+};
+
 // Multi-Agent System architecture
 export const agentsAPI = {
   getArchitecture: () => fetchAPI<AgentArchitectureInfo>("/agents"),
@@ -424,6 +465,76 @@ export interface PresetStartInfo {
   preset_name: string;
   subject_id: number;
   questions: QuestionInfo[];
+}
+
+export interface AvailabilitySlot {
+  day: number; // 0 = Thứ 2 ... 6 = CN
+  slot: "sang" | "chieu" | "toi";
+}
+
+export interface PersonalProfileInfo {
+  has_profile: boolean;
+  onboarded: boolean;
+  availability: AvailabilitySlot[];
+  active_plans: {
+    plan_id: number;
+    subject_id: number;
+    subject_name: string;
+    goal_label: string;
+    goal_theta: number;
+    target_weeks: number;
+  }[];
+}
+
+export interface StudyPlanItemInfo {
+  item_id: number;
+  day_of_week: number;
+  day_name: string;
+  slot: string;
+  slot_name: string;
+  activity: "practice" | "review" | "mock_exam";
+  topic_id?: number | null;
+  topic_name: string;
+  status: "pending" | "done" | "skipped";
+  result_score?: number | null;
+  result_total?: number | null;
+  session_id?: number | null;
+}
+
+export interface StudyPlanInfo {
+  plan_id: number;
+  subject_id: number;
+  goal_label: string;
+  goal_theta: number;
+  target_weeks: number;
+  start_theta?: number | null;
+  created_at?: string;
+  projection?: {
+    feasible: boolean;
+    goal_theta: number;
+    final_theta: number;
+    reach_week?: number | null;
+    projected_weekly: { week: number; theta: number }[];
+    notes: string[];
+    weeks_used: number;
+    slots_per_week: number;
+    sessions_total: number;
+  } | null;
+  progress: { done: number; total: number };
+  weeks: { week_index: number; items: StudyPlanItemInfo[] }[];
+  actual_weekly?: { week: number; theta: number }[];
+}
+
+export interface MonthlyReportInfo {
+  subject_id: number;
+  period_days: number;
+  sessions_completed: number;
+  theta_start?: number | null;
+  theta_now?: number | null;
+  theta_delta?: number | null;
+  weak_topics: { topic_id: number; topic_name: string; total: number; correct: number; accuracy: number }[];
+  improved_topics: { topic_id: number; topic_name: string; total: number; correct: number; accuracy: number }[];
+  plan_progress?: { done_this_month: number; done_total: number; total: number } | null;
 }
 
 export interface BuildDraftPayload {

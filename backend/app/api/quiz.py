@@ -20,6 +20,7 @@ from app.engine.scoring import score_quiz
 from app.engine.irt import estimate_ability_3pl, classify_mastery
 from app.engine.llm_generation import generate_question_from_topic
 from app.services.runtime_settings import get_effective_llm_runtime_config
+from app.services.question_format import normalize_format as _normalize_format
 from app.services.adaptive_shared import (
     safe_numeric as _safe_numeric,
     normalize_text as _normalize_text,
@@ -44,6 +45,10 @@ async def generate_question_with_llm(
     if not topic:
         raise HTTPException(status_code=404, detail="Topic not found")
 
+    fmt = _normalize_format(payload.question_format)
+    if payload.question_format and payload.question_format != fmt:
+        raise HTTPException(status_code=400, detail="Dạng câu hỏi không hỗ trợ")
+
     llm_runtime_settings = await get_effective_llm_runtime_config(db)
 
     existing_rows = await db.execute(
@@ -53,7 +58,13 @@ async def generate_question_with_llm(
         .limit(500)
     )
     existing_questions = existing_rows.scalars().all()
-    blocked_signatures = {_question_signature_from_model(q) for q in existing_questions}
+    # Options only identify an item for mcq/true_false; the other formats are
+    # de-duplicated on the stem alone.
+    blocked_signatures = {
+        _question_signature_from_model(q)
+        for q in existing_questions
+        if _normalize_format(q.question_format) in ("mcq", "true_false")
+    }
     blocked_stems = {_normalize_text(q.stem) for q in existing_questions}
 
     existing_stem_samples = [
@@ -80,12 +91,15 @@ async def generate_question_with_llm(
             knowledge_context=anti_dup_context or payload.knowledge_context,
             target_level=payload.target_level,
             runtime_settings=llm_runtime_settings,
+            question_format=fmt,
         )
 
-        candidate_signature = _question_signature_from_payload(candidate)
         candidate_stem = _normalize_text(candidate.get("stem", ""))
-        if candidate_signature in blocked_signatures or candidate_stem in blocked_stems:
+        if candidate_stem in blocked_stems:
             continue
+        if fmt in ("mcq", "true_false"):
+            if _question_signature_from_payload(candidate) in blocked_signatures:
+                continue
 
         generated = candidate
         break

@@ -9,19 +9,14 @@ import {
 } from "@/lib/api";
 import { Navbar } from "@/components/layout/navbar";
 import { MathContent } from "@/components/common/math-content";
+import { QuestionAnswerPreview } from "@/components/common/question-answer-preview";
+import { FORMAT_LABEL, normalizeFormat } from "@/lib/question-format";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { Hammer, RefreshCw, Save, ArrowLeft, Check, X } from "lucide-react";
-
-const FORMAT_LABEL: Record<string, string> = {
-  mcq: "Trắc nghiệm",
-  true_false: "Đúng/Sai",
-  short_answer: "Trả lời ngắn",
-  matching: "Ghép đôi",
-};
 
 function ValidationBadges({ item }: { item: BuilderItemInfo }) {
   if (item.source === "bank") {
@@ -327,7 +322,7 @@ export default function ExamBuilderPage() {
                     )}>
                       <div className="flex flex-wrap items-center gap-2 text-xs">
                         <span className="font-bold">Câu {idx + 1}</span>
-                        <span className="rounded bg-primary/10 px-2 py-0.5 text-primary">{FORMAT_LABEL[item.question_format]}</span>
+                        <span className="rounded bg-primary/10 px-2 py-0.5 text-primary">{FORMAT_LABEL[normalizeFormat(item.question_format)]}</span>
                         <span className="rounded bg-slate-100 px-2 py-0.5">{item.question_type}</span>
                         <span className="rounded bg-slate-100 px-2 py-0.5">b = {item.difficulty_b.toFixed(2)}</span>
                         <span className={cn("rounded px-2 py-0.5 font-medium",
@@ -354,24 +349,7 @@ export default function ExamBuilderPage() {
 
                       <p className="text-sm font-medium"><MathContent content={item.stem} inline /></p>
 
-                      {item.question_format === "short_answer" ? (
-                        <p className="text-xs text-green-700">Đáp án: {item.answer_text}</p>
-                      ) : item.question_format === "matching" ? (
-                        <div className="text-xs space-y-0.5">
-                          {item.matching_pairs.map((p) => (
-                            <p key={p.left}><MathContent content={p.left} inline /> → <span className="text-green-700"><MathContent content={p.right} inline /></span></p>
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="grid gap-1 text-xs md:grid-cols-2">
-                          {(item.question_format === "true_false" ? ["A", "B"] : ["A", "B", "C", "D"]).map((opt) => (
-                            <p key={opt} className={cn(opt === item.correct_answer && "text-green-700 font-medium")}>
-                              {opt}. <MathContent content={item[`option_${opt.toLowerCase()}` as "option_a"] as string} inline />
-                              {opt === item.correct_answer && " ✓"}
-                            </p>
-                          ))}
-                        </div>
-                      )}
+                      <QuestionAnswerPreview item={item} />
 
                       <ValidationBadges item={item} />
                     </div>

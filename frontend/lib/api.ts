@@ -95,6 +95,7 @@ export const quizAPI = {
     topic_id: number;
     knowledge_context?: string;
     target_level: string;
+    question_format?: QuestionFormat;
   }) =>
     fetchAPI<GeneratedQuestionInfo>("/quiz/generate-question", {
       method: "POST",
@@ -289,6 +290,7 @@ export const questionsAPI = {
     subject_id?: number;
     topic_id?: number;
     search?: string;
+    question_format?: QuestionFormat;
     include_archived?: boolean;
     skip?: number;
     limit?: number;
@@ -297,11 +299,27 @@ export const questionsAPI = {
     if (params.subject_id !== undefined) query.set("subject_id", String(params.subject_id));
     if (params.topic_id !== undefined) query.set("topic_id", String(params.topic_id));
     if (params.search) query.set("search", params.search);
+    if (params.question_format) query.set("question_format", params.question_format);
     if (params.include_archived !== undefined) query.set("include_archived", String(params.include_archived));
     if (params.skip !== undefined) query.set("skip", String(params.skip));
     if (params.limit !== undefined) query.set("limit", String(params.limit));
     const suffix = query.toString() ? `?${query.toString()}` : "";
     return fetchAPI<QuestionManageListInfo>(`/questions${suffix}`);
+  },
+
+  formatStats: (params: {
+    subject_id?: number;
+    topic_id?: number;
+    search?: string;
+    include_archived?: boolean;
+  } = {}) => {
+    const query = new URLSearchParams();
+    if (params.subject_id !== undefined) query.set("subject_id", String(params.subject_id));
+    if (params.topic_id !== undefined) query.set("topic_id", String(params.topic_id));
+    if (params.search) query.set("search", params.search);
+    if (params.include_archived !== undefined) query.set("include_archived", String(params.include_archived));
+    const suffix = query.toString() ? `?${query.toString()}` : "";
+    return fetchAPI<QuestionFormatStats>(`/questions/format-stats${suffix}`);
   },
 
   getById: (questionId: number) =>
@@ -855,11 +873,14 @@ export interface InferenceRuleLogInfo {
 
 export interface GeneratedQuestionInfo {
   stem: string;
+  question_format: QuestionFormat;
   option_a: string;
   option_b: string;
   option_c: string;
   option_d: string;
   correct_answer: string;
+  answer_text?: string | null;
+  matching_pairs: MatchingPair[];
   difficulty_b: number;
   discrimination_a: number;
   guessing_c: number;
@@ -896,17 +917,27 @@ export interface LLMRuntimeConfigUpdatePayload {
   gemini_model: string;
 }
 
+export type QuestionFormat = "mcq" | "true_false" | "short_answer" | "matching";
+
+export interface MatchingPair {
+  left: string;
+  right: string;
+}
+
 export interface QuestionManageBase {
   topic_id: number;
   stem: string;
+  question_format: QuestionFormat;
   option_a: string;
   option_b: string;
   option_c: string;
   option_d: string;
   correct_answer: string;
+  answer_text?: string | null;
+  matching_pairs: MatchingPair[];
   difficulty_b: number;
   discrimination_a: number;
-  guessing_c: number;
+  guessing_c?: number | null;
   question_type: string;
   time_limit_seconds: number;
   time_display?: string;
@@ -925,11 +956,14 @@ export interface QuestionManageItem {
   topic_name: string;
   major_topic_name: string;
   stem: string;
+  question_format: QuestionFormat;
   option_a: string;
   option_b: string;
   option_c: string;
   option_d: string;
   correct_answer: string;
+  answer_text?: string | null;
+  matching_pairs: MatchingPair[];
   difficulty_b: number;
   discrimination_a: number;
   guessing_c: number;
@@ -944,6 +978,15 @@ export interface QuestionManageListInfo {
   total: number;
   skip: number;
   limit: number;
+}
+
+export interface QuestionFormatStats {
+  total: number;
+  mcq: number;
+  true_false: number;
+  short_answer: number;
+  matching: number;
+  archived: number;
 }
 
 export interface QuizSubmitResult {

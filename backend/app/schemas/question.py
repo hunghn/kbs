@@ -25,17 +25,27 @@ class QuestionOut(BaseModel):
         from_attributes = True
 
 
+class MatchingPair(BaseModel):
+    left: str
+    right: str
+
+
 class QuestionManageBase(BaseModel):
     topic_id: int
     stem: str
-    option_a: str
-    option_b: str
-    option_c: str
-    option_d: str
-    correct_answer: str
+    # mcq | true_false | short_answer | matching
+    question_format: str = "mcq"
+    # Options only carry content for mcq; other formats use placeholders
+    option_a: str = ""
+    option_b: str = ""
+    option_c: str = ""
+    option_d: str = ""
+    correct_answer: str = "A"
+    answer_text: Optional[str] = None          # short_answer: "đáp án|alias|..."
+    matching_pairs: list[MatchingPair] = []    # matching
     difficulty_b: float
     discrimination_a: float
-    guessing_c: float
+    guessing_c: Optional[float] = None         # None -> default of the format
     question_type: str
     time_limit_seconds: int
     time_display: Optional[str] = None
@@ -49,11 +59,14 @@ class QuestionUpdate(BaseModel):
     external_id: Optional[str] = None
     topic_id: Optional[int] = None
     stem: Optional[str] = None
+    question_format: Optional[str] = None
     option_a: Optional[str] = None
     option_b: Optional[str] = None
     option_c: Optional[str] = None
     option_d: Optional[str] = None
     correct_answer: Optional[str] = None
+    answer_text: Optional[str] = None
+    matching_pairs: Optional[list[MatchingPair]] = None
     difficulty_b: Optional[float] = None
     discrimination_a: Optional[float] = None
     guessing_c: Optional[float] = None
@@ -70,11 +83,14 @@ class QuestionManageOut(BaseModel):
     topic_name: str
     major_topic_name: str
     stem: str
+    question_format: str = "mcq"
     option_a: str
     option_b: str
     option_c: str
     option_d: str
     correct_answer: str
+    answer_text: Optional[str] = None
+    matching_pairs: list[MatchingPair] = []
     difficulty_b: float
     discrimination_a: float
     guessing_c: float
@@ -89,6 +105,16 @@ class QuestionManageListOut(BaseModel):
     total: int
     skip: int
     limit: int
+
+
+class QuestionFormatStatsOut(BaseModel):
+    """Counts per question_format for the current filter."""
+    total: int = 0
+    mcq: int = 0
+    true_false: int = 0
+    short_answer: int = 0
+    matching: int = 0
+    archived: int = 0
 
 
 class QuestionWithAnswer(QuestionOut):
@@ -142,15 +168,20 @@ class LLMGenerateRequest(BaseModel):
     topic_id: int
     knowledge_context: Optional[str] = None
     target_level: str = "Thông hiểu"
+    # mcq | true_false | short_answer | matching
+    question_format: str = "mcq"
 
 
 class GeneratedQuestionOut(BaseModel):
     stem: str
-    option_a: str
-    option_b: str
-    option_c: str
-    option_d: str
-    correct_answer: str
+    question_format: str = "mcq"
+    option_a: str = ""
+    option_b: str = ""
+    option_c: str = ""
+    option_d: str = ""
+    correct_answer: str = "A"
+    answer_text: Optional[str] = None
+    matching_pairs: list[MatchingPair] = []
     difficulty_b: float
     discrimination_a: float
     guessing_c: float

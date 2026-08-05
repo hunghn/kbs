@@ -435,6 +435,17 @@ Ngân hàng hỗ trợ 4 dạng câu (`questions.question_format`): **trắc ngh
 (cặp trái-phải, đáp án không lộ ra client — cột phải được xáo trộn). Chấm điểm theo
 dạng ở cả hai luồng nộp bài (`grade_answer` trong `adaptive_shared.py`).
 
+Quy tắc của từng dạng (cột nào giữ đáp án, giá trị `c` mặc định và biên hợp lệ, ràng
+buộc 3–6 cặp ghép đôi) tập trung ở `app/services/question_format.py` —
+`normalize_format_fields()` là nơi duy nhất chuyển payload thành giá trị cột, dùng
+chung cho cả Exam Builder (câu LLM sinh) lẫn CRUD ngân hàng câu hỏi.
+
+Trang **Quản lý ngân hàng câu hỏi** (`/questions`) soạn thảo được cả 4 dạng: chọn dạng
+bằng bộ nút ở đầu form, thân form đổi theo dạng (4 ô đáp án / nút Đúng–Sai / đáp án
+chuẩn kèm chip alias / bảng cặp ghép đôi), lọc và thống kê theo dạng, và sinh nháp LLM
+theo dạng chỉ định. Câu đã có lịch sử làm bài không đổi được dạng (API trả 409) để
+không phá ý nghĩa của các lần chấm trước đó.
+
 Trang **Tạo đề thi** (`/questions/builder`, nút trong Quản lý câu hỏi) cho giáo viên:
 
 1. Chọn miền tri thức (môn/topic), số câu từng dạng, phân bổ Bloom, neo độ khó
